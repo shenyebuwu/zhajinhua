@@ -1,0 +1,14 @@
+{
+  "name": "lan-zhajinhua",
+  "version": "1.0.0",
+  "private": true,
+  "description": "LAN multiplayer Zha Jin Hua game for Docker/NAS deployment.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node scripts/smoke-test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

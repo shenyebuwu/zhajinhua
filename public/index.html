@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>局域网炸金花</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main id="app" class="app">
+      <section class="join-view" id="joinView">
+        <div class="join-panel">
+          <p class="eyebrow">LAN ZHA JIN HUA</p>
+          <h1>局域网炸金花</h1>
+          <form id="joinForm" class="join-form">
+            <label>
+              昵称
+              <input id="nameInput" name="name" maxlength="16" autocomplete="nickname" placeholder="例如：阿明" required>
+            </label>
+            <label>
+              房间号
+              <input id="roomInput" name="room" maxlength="8" autocapitalize="characters" placeholder="留空自动创建">
+            </label>
+            <button class="primary" type="submit">进入房间</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="game-view hidden" id="gameView">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">房间 <button id="copyRoomBtn" class="text-button" type="button"></button></p>
+            <h2 id="statusTitle">等待加入</h2>
+          </div>
+          <div class="bank">
+            <span>奖池</span>
+            <strong id="potValue">0</strong>
+          </div>
+        </header>
+
+        <section class="table-band">
+          <div class="table" id="table">
+            <div class="table-center">
+              <span id="stakeValue">当前注 10</span>
+              <strong id="turnValue">等待</strong>
+            </div>
+            <div class="players" id="players"></div>
+          </div>
+        </section>
+
+        <section class="hand-panel">
+          <div>
+            <p class="eyebrow">我的手牌</p>
+            <div class="my-cards" id="myCards"></div>
+          </div>
+          <div class="my-rank" id="myRank">未开局</div>
+        </section>
+
+        <section class="controls" id="controls"></section>
+
+        <section class="details">
+          <div class="rules">
+            <h3>规则</h3>
+            <p>牌型大小：豹子、同花顺、同花、顺子、对子、单张。看牌后跟注与加注按双倍支付；比牌需先看牌。</p>
+          </div>
+          <div class="log">
+            <h3>牌局记录</h3>
+            <ol id="logList"></ol>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <template id="playerTemplate">
+      <article class="player">
+        <div class="player-head">
+          <strong class="player-name"></strong>
+          <span class="player-state"></span>
+        </div>
+        <div class="mini-cards"></div>
+        <div class="player-foot">
+          <span class="chips"></span>
+          <span class="bet"></span>
+        </div>
+      </article>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
