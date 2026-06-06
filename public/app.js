@@ -180,6 +180,7 @@ function renderPlayers() {
   const positions = getPositions(state.players.length);
   tableEl.classList.toggle("many-players", state.players.length > 8);
   tableEl.classList.toggle("full-table", state.players.length > 12);
+  tableEl.classList.toggle("crowded-table", state.players.length > 14);
   tableEl.style.setProperty("--player-count", state.players.length);
   state.players.forEach((player, index) => {
     const node = playerTemplate.content.firstElementChild.cloneNode(true);
