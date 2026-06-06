@@ -39,6 +39,42 @@ http://NAS的局域网IP:3000
 http://192.168.1.20:3000
 ```
 
+## Dockge 直接拉镜像部署
+
+如果你想在 Dockge 里直接通过 Compose 拉取镜像部署，不在 NAS 上构建镜像，可以使用 GitHub Container Registry。
+
+先把本项目推送到 GitHub。推送到 `main` 分支后，仓库自带的 GitHub Actions 会自动构建镜像并发布到：
+
+```text
+ghcr.io/你的GitHub用户名/lan-zhajinhua:latest
+```
+
+第一次发布后，到 GitHub 仓库页面右侧的 `Packages` 打开这个镜像包，把可见性改成 `Public`。如果保持私有，Dockge 拉取时需要先在 NAS 上配置 GHCR 登录。
+
+Dockge 中新建 Stack，粘贴下面的 Compose，并把 `YOUR_GITHUB_USERNAME` 改成你的 GitHub 用户名：
+
+```yaml
+services:
+  zha-jin-hua:
+    image: ghcr.io/YOUR_GITHUB_USERNAME/lan-zhajinhua:latest
+    container_name: zha-jin-hua
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      STARTING_CHIPS: 1000
+      ANTE: 10
+      MAX_PLAYERS: 6
+      MAX_FAILED_JOINS: 20
+```
+
+部署后访问：
+
+```text
+http://NAS的局域网IP:3000
+```
+
 ## 内网穿透给朋友玩
 
 先在 NAS 上按 Docker 方式启动本项目，再把 NAS 的 `3000` 端口通过你的内网穿透工具映射出去。

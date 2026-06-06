@@ -1,0 +1,13 @@
+services:
+  zha-jin-hua:
+    image: ghcr.io/YOUR_GITHUB_USERNAME/lan-zhajinhua:latest
+    container_name: zha-jin-hua
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      STARTING_CHIPS: 1000
+      ANTE: 10
+      MAX_PLAYERS: 6
+      MAX_FAILED_JOINS: 20
