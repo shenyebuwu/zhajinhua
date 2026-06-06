@@ -10,7 +10,7 @@ const PUBLIC_DIR = path.join(__dirname, "public");
 const ROOM_TTL_MS = 1000 * 60 * 60 * 8;
 const STARTING_CHIPS = Number(process.env.STARTING_CHIPS || 1000);
 const ANTE = Number(process.env.ANTE || 10);
-const MAX_PLAYERS = Number(process.env.MAX_PLAYERS || 6);
+const MAX_PLAYERS = Number(process.env.MAX_PLAYERS || 17);
 const MIN_PLAYERS = 2;
 const JOIN_WINDOW_MS = 1000 * 60 * 10;
 const MAX_FAILED_JOINS = Number(process.env.MAX_FAILED_JOINS || 20);
@@ -59,20 +59,28 @@ function sanitizePassword(value) {
   return String(value || "").trim().slice(0, 64);
 }
 
+function sanitizePlayerLimit(value) {
+  const limit = Number(value || MAX_PLAYERS);
+  if (!Number.isFinite(limit)) return MAX_PLAYERS;
+  return Math.max(MIN_PLAYERS, Math.min(MAX_PLAYERS, Math.floor(limit)));
+}
+
 function hashPassword(password, salt) {
   return crypto.scryptSync(password, salt, 32).toString("hex");
 }
 
-function createRoom(requestedId, password = "") {
+function createRoom(requestedId, password = "", playerLimit = MAX_PLAYERS) {
   let id = sanitizeRoom(requestedId);
   while (!id || rooms.has(id)) {
     id = roomId();
   }
 
   const cleanPassword = sanitizePassword(password);
+  const cleanPlayerLimit = sanitizePlayerLimit(playerLimit);
   const passwordSalt = cleanPassword ? newId(8) : null;
   const room = {
     id,
+    playerLimit: cleanPlayerLimit,
     passwordSalt,
     passwordHash: cleanPassword ? hashPassword(cleanPassword, passwordSalt) : null,
     phase: "lobby",
@@ -351,8 +359,8 @@ function joinRoom(room, name, playerId, password, req) {
   }
   clearFailedJoin(room, req);
 
-  if (room.players.length >= MAX_PLAYERS) {
-    throw new Error(`房间最多 ${MAX_PLAYERS} 人`);
+  if (room.players.length >= room.playerLimit) {
+    throw new Error(`房间最多 ${room.playerLimit} 人`);
   }
   if (room.phase === "playing") {
     throw new Error("牌局进行中，等本局结束后再加入");
@@ -411,7 +419,8 @@ function snapshot(room, viewerId) {
     roundNo: room.roundNo,
     winnerId: room.winnerId,
     lastResult: room.lastResult,
-    maxPlayers: MAX_PLAYERS,
+    maxPlayers: room.playerLimit,
+    deployMaxPlayers: MAX_PLAYERS,
     startingChips: STARTING_CHIPS,
     hasPassword: Boolean(room.passwordHash),
     players: room.players.map((p) => publicPlayer(p, viewerId, room)),
@@ -579,7 +588,7 @@ async function handleApi(req, res) {
     if (req.method === "POST" && url.pathname === "/api/join") {
       const body = await parseJson(req);
       const requestedRoom = sanitizeRoom(body.room);
-      const room = getRoom(requestedRoom) || createRoom(requestedRoom, body.password);
+      const room = getRoom(requestedRoom) || createRoom(requestedRoom, body.password, body.playerLimit);
       const player = joinRoom(room, body.name, body.playerId, body.password, req);
       broadcast(room);
       json(res, 200, { roomId: room.id, playerId: player.id, state: snapshot(room, player.id) });

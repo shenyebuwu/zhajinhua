@@ -6,11 +6,13 @@ const joinForm = document.querySelector("#joinForm");
 const nameInput = document.querySelector("#nameInput");
 const roomInput = document.querySelector("#roomInput");
 const passwordInput = document.querySelector("#passwordInput");
+const playerLimitInput = document.querySelector("#playerLimitInput");
 const copyRoomBtn = document.querySelector("#copyRoomBtn");
 const statusTitle = document.querySelector("#statusTitle");
 const potValue = document.querySelector("#potValue");
 const stakeValue = document.querySelector("#stakeValue");
 const turnValue = document.querySelector("#turnValue");
+const tableEl = document.querySelector("#table");
 const playersEl = document.querySelector("#players");
 const myCards = document.querySelector("#myCards");
 const myRank = document.querySelector("#myRank");
@@ -48,7 +50,7 @@ copyRoomBtn.addEventListener("click", async () => {
 });
 
 if (inviteRoom && inviteRoom !== session.roomId) {
-  session = { name: session.name || localStorage.getItem("zjh.name") || "", roomId: inviteRoom };
+  session = { name: session.name || localStorage.getItem("zjh.name") || "", roomId: inviteRoom, playerId: null };
 }
 
 if (session.roomId && session.playerId) {
@@ -92,7 +94,8 @@ async function joinRoom() {
       name,
       room: roomInput.value.trim(),
       playerId: session.playerId,
-      password: passwordInput.value
+      password: passwordInput.value,
+      playerLimit: playerLimitInput.value
     });
     saveSession({ name, roomId: result.roomId, playerId: result.playerId });
     setState(result.state);
@@ -108,7 +111,8 @@ async function reconnect() {
       name: session.name,
       room: session.roomId,
       playerId: session.playerId,
-      password: passwordInput.value
+      password: passwordInput.value,
+      playerLimit: playerLimitInput.value
     });
     saveSession({ ...session, roomId: result.roomId, playerId: result.playerId });
     setState(result.state);
@@ -174,6 +178,9 @@ function render() {
 function renderPlayers() {
   playersEl.innerHTML = "";
   const positions = getPositions(state.players.length);
+  tableEl.classList.toggle("many-players", state.players.length > 8);
+  tableEl.classList.toggle("full-table", state.players.length > 12);
+  tableEl.style.setProperty("--player-count", state.players.length);
   state.players.forEach((player, index) => {
     const node = playerTemplate.content.firstElementChild.cloneNode(true);
     const position = positions[index];
@@ -195,40 +202,25 @@ function renderPlayers() {
 }
 
 function getPositions(count) {
-  const map = {
-    1: [{ left: "50%", top: "72%", transform: "translate(-50%, -50%)" }],
-    2: [
-      { left: "50%", top: "76%", transform: "translate(-50%, -50%)" },
-      { left: "50%", top: "7%", transform: "translate(-50%, 0)" }
-    ],
-    3: [
-      { left: "50%", top: "76%", transform: "translate(-50%, -50%)" },
-      { left: "4%", top: "18%" },
-      { left: "calc(96% - min(175px, 42vw))", top: "18%" }
-    ],
-    4: [
-      { left: "50%", top: "76%", transform: "translate(-50%, -50%)" },
-      { left: "4%", top: "36%" },
-      { left: "50%", top: "7%", transform: "translate(-50%, 0)" },
-      { left: "calc(96% - min(175px, 42vw))", top: "36%" }
-    ],
-    5: [
-      { left: "50%", top: "78%", transform: "translate(-50%, -50%)" },
-      { left: "3%", top: "44%" },
-      { left: "8%", top: "10%" },
-      { left: "calc(92% - min(175px, 42vw))", top: "10%" },
-      { left: "calc(97% - min(175px, 42vw))", top: "44%" }
-    ],
-    6: [
-      { left: "50%", top: "78%", transform: "translate(-50%, -50%)" },
-      { left: "3%", top: "48%" },
-      { left: "7%", top: "12%" },
-      { left: "50%", top: "6%", transform: "translate(-50%, 0)" },
-      { left: "calc(93% - min(175px, 42vw))", top: "12%" },
-      { left: "calc(97% - min(175px, 42vw))", top: "48%" }
-    ]
-  };
-  return map[count] || map[6];
+  if (count <= 1) {
+    return [{ left: "50%", top: "72%", transform: "translate(-50%, -50%)" }];
+  }
+
+  const positions = [];
+  const radiusX = 43;
+  const radiusY = 40;
+  const start = Math.PI / 2;
+  for (let index = 0; index < count; index += 1) {
+    const angle = start + (index / count) * Math.PI * 2;
+    const x = 50 + Math.cos(angle) * radiusX;
+    const y = 50 + Math.sin(angle) * radiusY;
+    positions.push({
+      left: `${x}%`,
+      top: `${y}%`,
+      transform: "translate(-50%, -50%)"
+    });
+  }
+  return positions;
 }
 
 function playerState(player) {

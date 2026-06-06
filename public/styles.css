@@ -199,7 +199,7 @@ select:focus {
 
 .table {
   position: relative;
-  min-height: 380px;
+  min-height: 430px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
   background: radial-gradient(circle, #287653, #134c38 68%, #10251d);
@@ -238,13 +238,51 @@ select:focus {
 
 .player {
   position: absolute;
-  width: min(175px, 42vw);
+  width: min(156px, 42vw);
   min-height: 118px;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(18, 22, 17, 0.86);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+.table.many-players {
+  min-height: 540px;
+}
+
+.table.full-table {
+  min-height: 650px;
+}
+
+.table.many-players .player {
+  width: min(132px, 34vw);
+  min-height: 102px;
+  padding: 8px;
+}
+
+.table.many-players .card {
+  width: 29px;
+  font-size: 12px;
+}
+
+.table.full-table .player {
+  width: min(116px, 30vw);
+  min-height: 94px;
+}
+
+.table.full-table .player-foot {
+  display: grid;
+}
+
+.table.full-table .mini-cards {
+  gap: 3px;
+}
+
+.table.full-table .card {
+  width: 25px;
+  border-radius: 5px;
+  font-size: 11px;
 }
 
 .player.is-turn {
@@ -393,11 +431,27 @@ select:focus {
   }
 
   .table {
-    min-height: 430px;
+    min-height: 520px;
+  }
+
+  .table.many-players {
+    min-height: 640px;
+  }
+
+  .table.full-table {
+    min-height: 780px;
   }
 
   .player {
-    width: min(150px, 44vw);
+    width: min(140px, 42vw);
+  }
+
+  .table.many-players .player {
+    width: min(116px, 34vw);
+  }
+
+  .table.full-table .player {
+    width: min(104px, 30vw);
   }
 
   .hand-panel,

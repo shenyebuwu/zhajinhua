@@ -3,15 +3,15 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title>局域网炸金花</title>
+    <title>炸金花</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <main id="app" class="app">
       <section class="join-view" id="joinView">
         <div class="join-panel">
-          <p class="eyebrow">LAN ZHA JIN HUA</p>
-          <h1>局域网炸金花</h1>
+          <p class="eyebrow">ZHA JIN HUA</p>
+          <h1>炸金花</h1>
           <form id="joinForm" class="join-form">
             <label>
               昵称
@@ -24,6 +24,10 @@
             <label>
               房间密码
               <input id="passwordInput" name="password" maxlength="64" autocomplete="off" placeholder="公网/内网穿透时建议填写">
+            </label>
+            <label>
+              人数上限
+              <input id="playerLimitInput" name="playerLimit" type="number" min="2" max="17" inputmode="numeric" value="10">
             </label>
             <button class="primary" type="submit">进入房间</button>
           </form>
