@@ -1,6 +1,6 @@
 services:
   zha-jin-hua:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/lan-zhajinhua:latest
+    image: ghcr.io/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY_NAME:latest
     container_name: zha-jin-hua
     restart: unless-stopped
     ports:

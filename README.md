@@ -46,17 +46,17 @@ http://192.168.1.20:3000
 先把本项目推送到 GitHub。推送到 `main` 分支后，仓库自带的 GitHub Actions 会自动构建镜像并发布到：
 
 ```text
-ghcr.io/你的GitHub用户名/lan-zhajinhua:latest
+ghcr.io/你的GitHub用户名/你的仓库名:latest
 ```
 
 第一次发布后，到 GitHub 仓库页面右侧的 `Packages` 打开这个镜像包，把可见性改成 `Public`。如果保持私有，Dockge 拉取时需要先在 NAS 上配置 GHCR 登录。
 
-Dockge 中新建 Stack，粘贴下面的 Compose，并把 `YOUR_GITHUB_USERNAME` 改成你的 GitHub 用户名：
+Dockge 中新建 Stack，粘贴下面的 Compose，并把 `YOUR_GITHUB_USERNAME` 改成你的 GitHub 用户名，把 `YOUR_REPOSITORY_NAME` 改成你的仓库名：
 
 ```yaml
 services:
   zha-jin-hua:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/lan-zhajinhua:latest
+    image: ghcr.io/YOUR_GITHUB_USERNAME/YOUR_REPOSITORY_NAME:latest
     container_name: zha-jin-hua
     restart: unless-stopped
     ports:
