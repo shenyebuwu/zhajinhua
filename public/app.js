@@ -5,6 +5,7 @@ const gameView = document.querySelector("#gameView");
 const joinForm = document.querySelector("#joinForm");
 const nameInput = document.querySelector("#nameInput");
 const roomInput = document.querySelector("#roomInput");
+const passwordInput = document.querySelector("#passwordInput");
 const copyRoomBtn = document.querySelector("#copyRoomBtn");
 const statusTitle = document.querySelector("#statusTitle");
 const potValue = document.querySelector("#potValue");
@@ -90,7 +91,8 @@ async function joinRoom() {
     const result = await api("/api/join", {
       name,
       room: roomInput.value.trim(),
-      playerId: session.playerId
+      playerId: session.playerId,
+      password: passwordInput.value
     });
     saveSession({ name, roomId: result.roomId, playerId: result.playerId });
     setState(result.state);
@@ -105,7 +107,8 @@ async function reconnect() {
     const result = await api("/api/join", {
       name: session.name,
       room: session.roomId,
-      playerId: session.playerId
+      playerId: session.playerId,
+      password: passwordInput.value
     });
     saveSession({ ...session, roomId: result.roomId, playerId: result.playerId });
     setState(result.state);

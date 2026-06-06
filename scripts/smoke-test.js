@@ -52,8 +52,12 @@ async function main() {
   assert.strictEqual(css.status, 200);
   assert.ok((css.headers.get("content-type") || "").includes("text/css"));
 
-  const alice = await post(base, "/api/join", { name: "阿明", room: "TEST" });
-  const bob = await post(base, "/api/join", { name: "小李", room: "TEST" });
+  const alice = await post(base, "/api/join", { name: "阿明", room: "TEST", password: "secret" });
+  await assert.rejects(
+    () => post(base, "/api/join", { name: "路人", room: "TEST", password: "wrong" }),
+    /房间密码不正确/
+  );
+  const bob = await post(base, "/api/join", { name: "小李", room: "TEST", password: "secret" });
   assert.strictEqual(alice.roomId, "TEST");
   assert.strictEqual(bob.state.players.length, 2);
 

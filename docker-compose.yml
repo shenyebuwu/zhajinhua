@@ -10,3 +10,4 @@ services:
       STARTING_CHIPS: 1000
       ANTE: 10
       MAX_PLAYERS: 6
+      MAX_FAILED_JOINS: 20

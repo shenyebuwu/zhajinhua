@@ -12,8 +12,11 @@ const STARTING_CHIPS = Number(process.env.STARTING_CHIPS || 1000);
 const ANTE = Number(process.env.ANTE || 10);
 const MAX_PLAYERS = Number(process.env.MAX_PLAYERS || 6);
 const MIN_PLAYERS = 2;
+const JOIN_WINDOW_MS = 1000 * 60 * 10;
+const MAX_FAILED_JOINS = Number(process.env.MAX_FAILED_JOINS || 20);
 
 const rooms = new Map();
+const failedJoins = new Map();
 
 const suits = ["S", "H", "D", "C"];
 const ranks = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
@@ -37,7 +40,7 @@ function newId(bytes = 8) {
 function roomId() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let id = "";
-  for (let i = 0; i < 4; i += 1) {
+  for (let i = 0; i < 6; i += 1) {
     id += alphabet[Math.floor(Math.random() * alphabet.length)];
   }
   return id;
@@ -52,14 +55,26 @@ function sanitizeName(value) {
   return name || `玩家${Math.floor(Math.random() * 90) + 10}`;
 }
 
-function createRoom(requestedId) {
+function sanitizePassword(value) {
+  return String(value || "").trim().slice(0, 64);
+}
+
+function hashPassword(password, salt) {
+  return crypto.scryptSync(password, salt, 32).toString("hex");
+}
+
+function createRoom(requestedId, password = "") {
   let id = sanitizeRoom(requestedId);
   while (!id || rooms.has(id)) {
     id = roomId();
   }
 
+  const cleanPassword = sanitizePassword(password);
+  const passwordSalt = cleanPassword ? newId(8) : null;
   const room = {
     id,
+    passwordSalt,
+    passwordHash: cleanPassword ? hashPassword(cleanPassword, passwordSalt) : null,
     phase: "lobby",
     hostId: null,
     players: [],
@@ -282,7 +297,44 @@ function requireTurn(room, playerId) {
   return player;
 }
 
-function joinRoom(room, name, playerId) {
+function verifyRoomPassword(room, password) {
+  if (!room.passwordHash) return true;
+  const cleanPassword = sanitizePassword(password);
+  if (!cleanPassword) return false;
+  const candidate = hashPassword(cleanPassword, room.passwordSalt);
+  return crypto.timingSafeEqual(Buffer.from(candidate, "hex"), Buffer.from(room.passwordHash, "hex"));
+}
+
+function rateLimitKey(room, req) {
+  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  const ip = forwarded || req.socket.remoteAddress || "unknown";
+  return `${room.id}:${ip}`;
+}
+
+function assertCanTryJoin(room, req) {
+  const key = rateLimitKey(room, req);
+  const entry = failedJoins.get(key);
+  if (entry && Date.now() - entry.firstAt < JOIN_WINDOW_MS && entry.count >= MAX_FAILED_JOINS) {
+    throw new Error("尝试次数过多，请稍后再试");
+  }
+}
+
+function recordFailedJoin(room, req) {
+  const key = rateLimitKey(room, req);
+  const now = Date.now();
+  const entry = failedJoins.get(key);
+  if (!entry || now - entry.firstAt >= JOIN_WINDOW_MS) {
+    failedJoins.set(key, { count: 1, firstAt: now });
+    return;
+  }
+  entry.count += 1;
+}
+
+function clearFailedJoin(room, req) {
+  failedJoins.delete(rateLimitKey(room, req));
+}
+
+function joinRoom(room, name, playerId, password, req) {
   const normalizedName = sanitizeName(name);
   let player = playerId ? room.players.find((p) => p.id === playerId) : null;
   if (player) {
@@ -291,6 +343,13 @@ function joinRoom(room, name, playerId) {
     room.updatedAt = Date.now();
     return player;
   }
+
+  assertCanTryJoin(room, req);
+  if (!verifyRoomPassword(room, password)) {
+    recordFailedJoin(room, req);
+    throw new Error("房间密码不正确");
+  }
+  clearFailedJoin(room, req);
 
   if (room.players.length >= MAX_PLAYERS) {
     throw new Error(`房间最多 ${MAX_PLAYERS} 人`);
@@ -354,6 +413,7 @@ function snapshot(room, viewerId) {
     lastResult: room.lastResult,
     maxPlayers: MAX_PLAYERS,
     startingChips: STARTING_CHIPS,
+    hasPassword: Boolean(room.passwordHash),
     players: room.players.map((p) => publicPlayer(p, viewerId, room)),
     viewerId: viewer ? viewer.id : null,
     hostId: room.hostId,
@@ -519,8 +579,8 @@ async function handleApi(req, res) {
     if (req.method === "POST" && url.pathname === "/api/join") {
       const body = await parseJson(req);
       const requestedRoom = sanitizeRoom(body.room);
-      const room = getRoom(requestedRoom) || createRoom(requestedRoom);
-      const player = joinRoom(room, body.name, body.playerId);
+      const room = getRoom(requestedRoom) || createRoom(requestedRoom, body.password);
+      const player = joinRoom(room, body.name, body.playerId, body.password, req);
       broadcast(room);
       json(res, 200, { roomId: room.id, playerId: player.id, state: snapshot(room, player.id) });
       return;
@@ -582,6 +642,9 @@ setInterval(() => {
     if (room.clients.size === 0 && now - room.updatedAt > ROOM_TTL_MS) {
       rooms.delete(id);
     }
+  }
+  for (const [key, entry] of failedJoins.entries()) {
+    if (now - entry.firstAt > JOIN_WINDOW_MS) failedJoins.delete(key);
   }
 }, 1000 * 60 * 15).unref();
 
