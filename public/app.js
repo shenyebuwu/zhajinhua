@@ -429,7 +429,11 @@ async function toggleVoice() {
 async function startVoice() {
   if (!state) return;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    toast("当前浏览器不支持麦克风");
+    if (!window.isSecureContext) {
+      toast("开麦需要 HTTPS，localhost 调试除外");
+    } else {
+      toast("当前浏览器不支持麦克风");
+    }
     return;
   }
   try {
