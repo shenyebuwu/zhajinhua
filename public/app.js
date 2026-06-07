@@ -15,6 +15,10 @@ const authSubmit = document.querySelector("#authSubmit");
 const accountTitle = document.querySelector("#accountTitle");
 const adminBtn = document.querySelector("#adminBtn");
 const logoutBtn = document.querySelector("#logoutBtn");
+const lobbyMenu = document.querySelector("#lobbyMenu");
+const lobbyPanels = [...document.querySelectorAll(".lobby-panel")];
+const lobbyOpenButtons = [...document.querySelectorAll("[data-lobby-target]")];
+const lobbyBackButtons = [...document.querySelectorAll("[data-lobby-back]")];
 const profileForm = document.querySelector("#profileForm");
 const profileDisplayNameInput = document.querySelector("#profileDisplayNameInput");
 const profileCurrentPasswordInput = document.querySelector("#profileCurrentPasswordInput");
@@ -64,6 +68,8 @@ joinRoomInput.value = inviteRoom;
 loginTab.addEventListener("click", () => setAuthMode("login"));
 registerTab.addEventListener("click", () => setAuthMode("register"));
 authForm.addEventListener("submit", submitAuth);
+lobbyOpenButtons.forEach((button) => button.addEventListener("click", () => showLobbyPanel(button.dataset.lobbyTarget)));
+lobbyBackButtons.forEach((button) => button.addEventListener("click", showLobbyMenu));
 profileForm.addEventListener("submit", saveProfile);
 createRoomForm.addEventListener("submit", createRoom);
 joinRoomForm.addEventListener("submit", joinRoom);
@@ -364,7 +370,22 @@ function showAuth() {
 function showLobby() {
   renderAccount();
   switchView(lobbyView);
-  if (inviteRoom) joinRoomInput.value = inviteRoom;
+  if (inviteRoom) {
+    joinRoomInput.value = inviteRoom;
+    showLobbyPanel("joinPanel");
+  } else {
+    showLobbyMenu();
+  }
+}
+
+function showLobbyMenu() {
+  lobbyMenu.classList.remove("hidden");
+  for (const panel of lobbyPanels) panel.classList.add("hidden");
+}
+
+function showLobbyPanel(id) {
+  lobbyMenu.classList.add("hidden");
+  for (const panel of lobbyPanels) panel.classList.toggle("hidden", panel.id !== id);
 }
 
 function renderAccount() {

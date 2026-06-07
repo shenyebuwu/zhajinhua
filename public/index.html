@@ -46,7 +46,23 @@
           </div>
         </header>
 
-        <section class="lobby-grid">
+        <section id="lobbyMenu" class="lobby-menu">
+          <button class="menu-card" type="button" data-lobby-target="profilePanel">
+            <strong>个人资料</strong>
+            <span>修改昵称和密码</span>
+          </button>
+          <button class="menu-card" type="button" data-lobby-target="createPanel">
+            <strong>创建房间</strong>
+            <span>设置人数、底注和规则参数</span>
+          </button>
+          <button class="menu-card" type="button" data-lobby-target="joinPanel">
+            <strong>加入房间</strong>
+            <span>输入房间号和密码进入牌局</span>
+          </button>
+        </section>
+
+        <section id="profilePanel" class="lobby-panel hidden">
+          <button class="back-button" type="button" data-lobby-back>返回</button>
           <form id="profileForm" class="tool-panel">
             <h3>个人资料</h3>
             <label>
@@ -63,7 +79,10 @@
             </label>
             <button class="primary" type="submit">保存资料</button>
           </form>
+        </section>
 
+        <section id="createPanel" class="lobby-panel hidden">
+          <button class="back-button" type="button" data-lobby-back>返回</button>
           <form id="createRoomForm" class="tool-panel">
             <h3>创建房间</h3>
             <label>
@@ -96,7 +115,10 @@
             </div>
             <button class="primary" type="submit">创建并进入</button>
           </form>
+        </section>
 
+        <section id="joinPanel" class="lobby-panel hidden">
+          <button class="back-button" type="button" data-lobby-back>返回</button>
           <form id="joinRoomForm" class="tool-panel">
             <h3>加入房间</h3>
             <label>
