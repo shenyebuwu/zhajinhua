@@ -389,21 +389,20 @@ function transferChips(room, from, to, amount) {
   return realAmount;
 }
 
-function settleHappyBonuses(room) {
-  const bonuses = [];
-  for (const player of room.players.filter((p) => p.inHand)) {
-    const rank = evaluateHand(player.hand);
-    const multiplier = rank.type === 6 ? 20 : rank.type === 5 ? 10 : 0;
-    if (!multiplier) continue;
-    const bonus = room.ante * multiplier;
-    let total = 0;
-    for (const payer of room.players.filter((p) => p.inHand && p.id !== player.id)) {
-      total += transferChips(room, payer, player, bonus);
-    }
-    bonuses.push({ playerId: player.id, name: player.name, label: rank.label, bonus, total });
-    appendLog(room, `${player.name} ${rank.label}有喜，每人给 ${bonus}，共得 ${total}`);
+function settleHappyBonusForPlayer(room, player) {
+  if (!player.inHand || player.folded || player.happyPaid || player.blindActionCount < 1) return;
+  const rank = evaluateHand(player.hand);
+  const multiplier = rank.type === 6 ? 20 : rank.type === 5 ? 10 : 0;
+  if (!multiplier) return;
+  const bonus = room.ante * multiplier;
+  let total = 0;
+  for (const payer of room.players.filter((p) => p.inHand && p.id !== player.id)) {
+    total += transferChips(room, payer, player, bonus);
   }
-  room.happyBonuses = bonuses;
+  player.happyPaid = true;
+  const record = { playerId: player.id, name: player.name, label: rank.label, bonus, total };
+  room.happyBonuses.push(record);
+  appendLog(room, `${player.name} 闷过后${rank.label}有喜，每人给 ${bonus}，共得 ${total}`);
 }
 
 function startHand(room) {
@@ -429,6 +428,8 @@ function startHand(room) {
     player.seen = false;
     player.revealed = false;
     player.revealedBy = null;
+    player.blindActionCount = 0;
+    player.happyPaid = false;
     player.inHand = player.chips > 0;
     player.betThisHand = 0;
     if (player.inHand) {
@@ -438,7 +439,6 @@ function startHand(room) {
     }
   }
 
-  settleHappyBonuses(room);
   room.turnIndex = nextActiveIndex(room, room.dealerIndex);
   setTurnDeadline(room);
   appendLog(room, `第 ${room.roundNo} 局开始，底注 ${room.ante}`);
@@ -566,6 +566,8 @@ function joinRoom(room, user, password, req) {
     seen: false,
     revealed: false,
     revealedBy: null,
+    blindActionCount: 0,
+    happyPaid: false,
     inHand: false,
     betThisHand: 0,
     online: true,
@@ -776,8 +778,13 @@ function handleAction(room, playerId, action, payload) {
   }
 
   if (action === "call") {
+    const wasBlind = !player.seen;
     const cost = room.currentStake * (player.seen ? 2 : 1);
     const paid = pay(room, player, cost);
+    if (wasBlind) {
+      player.blindActionCount += 1;
+      settleHappyBonusForPlayer(room, player);
+    }
     appendLog(room, `${player.name}${player.seen ? "明跟" : "闷跟"} ${paid}`);
     advanceTurn(room);
     return;
@@ -791,8 +798,13 @@ function handleAction(room, playerId, action, payload) {
     if (stake > room.ante * room.maxRaiseMultiplier) {
       throw new Error(`单注最高为底注的 ${room.maxRaiseMultiplier} 倍`);
     }
+    const wasBlind = !player.seen;
     room.currentStake = stake;
     const paid = pay(room, player, room.currentStake * (player.seen ? 2 : 1));
+    if (wasBlind) {
+      player.blindActionCount += 1;
+      settleHappyBonusForPlayer(room, player);
+    }
     appendLog(room, `${player.name} 加注到 ${stake}，支付 ${paid}`);
     advanceTurn(room);
     return;
@@ -1076,5 +1088,8 @@ if (require.main === module) {
 module.exports = {
   createGameServer,
   evaluateHand,
-  compareHands
+  compareHands,
+  __test: {
+    settleHappyBonusForPlayer
+  }
 };

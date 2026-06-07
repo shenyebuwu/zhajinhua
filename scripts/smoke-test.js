@@ -8,7 +8,7 @@ const path = require("path");
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "zjh-test-"));
 process.env.ROOM_IDLE_MINUTES = "30";
 
-const { createGameServer, compareHands, evaluateHand } = require("../server");
+const { createGameServer, compareHands, evaluateHand, __test } = require("../server");
 
 const server = createGameServer();
 
@@ -48,6 +48,33 @@ async function main() {
   );
   assert.strictEqual(evaluateHand([card("S", 12), card("S", 13), card("S", 14)]).label, "顺金");
   assert.strictEqual(evaluateHand([card("S", 14), card("H", 2), card("D", 3)]).label, "顺子");
+
+  const happyRoom = {
+    ante: 10,
+    happyBonuses: [],
+    lastActiveAt: Date.now(),
+    log: [],
+    players: [
+      {
+        id: "a",
+        name: "豹子",
+        chips: 1000,
+        inHand: true,
+        folded: false,
+        happyPaid: false,
+        blindActionCount: 0,
+        hand: [card("S", 9), card("H", 9), card("D", 9)]
+      },
+      { id: "b", name: "对手", chips: 1000, inHand: true, folded: false, hand: [card("S", 2), card("H", 7), card("D", 12)] }
+    ]
+  };
+  __test.settleHappyBonusForPlayer(happyRoom, happyRoom.players[0]);
+  assert.strictEqual(happyRoom.happyBonuses.length, 0);
+  happyRoom.players[0].blindActionCount = 1;
+  __test.settleHappyBonusForPlayer(happyRoom, happyRoom.players[0]);
+  assert.strictEqual(happyRoom.happyBonuses.length, 1);
+  assert.strictEqual(happyRoom.players[0].chips, 1200);
+  assert.strictEqual(happyRoom.players[1].chips, 800);
 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address();
