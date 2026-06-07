@@ -89,6 +89,11 @@ async function main() {
 
   const joined = await post(base, "/api/room/join", { room: "TEST", password: "secret" }, bob.token);
   assert.strictEqual(joined.state.players.length, 2);
+  await post(base, "/api/voice/signal", {
+    room: "TEST",
+    to: bob.user.id,
+    signal: { type: "candidate", candidate: { candidate: "test", sdpMid: "0", sdpMLineIndex: 0 } }
+  }, alice.token);
 
   const rejoin = await post(base, "/api/room/join", { room: "TEST", password: "secret" }, bob.token);
   assert.strictEqual(rejoin.state.players.length, 2);

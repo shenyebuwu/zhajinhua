@@ -30,6 +30,8 @@ const createRaiseInput = document.querySelector("#createRaiseInput");
 const joinRoomInput = document.querySelector("#joinRoomInput");
 const joinPasswordInput = document.querySelector("#joinPasswordInput");
 const copyRoomBtn = document.querySelector("#copyRoomBtn");
+const voiceBtn = document.querySelector("#voiceBtn");
+const remoteAudioRoot = document.querySelector("#remoteAudioRoot");
 const statusTitle = document.querySelector("#statusTitle");
 const potValue = document.querySelector("#potValue");
 const stakeValue = document.querySelector("#stakeValue");
@@ -51,6 +53,11 @@ let token = localStorage.getItem("zjh.token") || "";
 let currentUser = null;
 let state = null;
 let events = null;
+let voiceEnabled = false;
+let localStream = null;
+const voicePeers = new Map();
+const remoteAudios = new Map();
+const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
 joinRoomInput.value = inviteRoom;
 
@@ -64,6 +71,7 @@ logoutBtn.addEventListener("click", logout);
 adminBtn.addEventListener("click", showAdmin);
 backLobbyBtn.addEventListener("click", showLobby);
 copyRoomBtn.addEventListener("click", copyInvite);
+voiceBtn.addEventListener("click", toggleVoice);
 
 boot();
 
@@ -179,6 +187,9 @@ function openEvents() {
   events.onerror = () => {
     turnValue.textContent = "重连中";
   };
+  events.addEventListener("voice", (event) => {
+    handleVoiceSignal(JSON.parse(event.data)).catch((error) => toast(error.message));
+  });
 }
 
 async function act(action, extra = {}) {
@@ -212,6 +223,8 @@ function render() {
   renderHand();
   renderControls();
   renderLog();
+  updateVoiceButton();
+  syncVoicePeers().catch(() => {});
 }
 
 function renderPlayers() {
@@ -362,6 +375,7 @@ function renderAccount() {
 
 function showGame() {
   switchView(gameView);
+  updateVoiceButton();
 }
 
 async function showAdmin() {
@@ -377,12 +391,14 @@ function switchView(view) {
 function leaveRoom() {
   if (events) events.close();
   events = null;
+  stopVoice();
   state = null;
   showLobby();
 }
 
 function logout() {
   if (events) events.close();
+  stopVoice();
   localStorage.removeItem("zjh.token");
   token = "";
   currentUser = null;
@@ -399,6 +415,134 @@ async function copyInvite() {
   } catch {
     toast(`房间号：${state.id}`);
   }
+}
+
+async function toggleVoice() {
+  if (voiceEnabled) {
+    stopVoice();
+    toast("已关闭麦克风");
+    return;
+  }
+  await startVoice();
+}
+
+async function startVoice() {
+  if (!state) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast("当前浏览器不支持麦克风");
+    return;
+  }
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false
+    });
+    voiceEnabled = true;
+    updateVoiceButton();
+    await syncVoicePeers(true);
+    toast("已开麦");
+  } catch (error) {
+    voiceEnabled = false;
+    localStream = null;
+    updateVoiceButton();
+    toast(error.name === "NotAllowedError" ? "麦克风权限被拒绝" : "无法开启麦克风");
+  }
+}
+
+function stopVoice() {
+  voiceEnabled = false;
+  if (localStream) {
+    for (const track of localStream.getTracks()) track.stop();
+  }
+  localStream = null;
+  for (const peer of voicePeers.values()) peer.close();
+  voicePeers.clear();
+  for (const audio of remoteAudios.values()) audio.remove();
+  remoteAudios.clear();
+  updateVoiceButton();
+}
+
+function updateVoiceButton() {
+  if (!voiceBtn) return;
+  voiceBtn.textContent = voiceEnabled ? "关麦" : "开麦";
+  voiceBtn.classList.toggle("voice-on", voiceEnabled);
+}
+
+async function syncVoicePeers(forceOffer = false) {
+  if (!voiceEnabled || !state || !currentUser) return;
+  const activeIds = new Set(state.players.map((player) => player.id).filter((id) => id !== currentUser.id));
+  for (const peerId of [...voicePeers.keys()]) {
+    if (!activeIds.has(peerId)) closePeer(peerId);
+  }
+  for (const peerId of activeIds) {
+    const peer = getOrCreatePeer(peerId);
+    if ((forceOffer || currentUser.id < peerId) && peer.signalingState === "stable" && !peer.__offered) {
+      peer.__offered = true;
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      await sendVoiceSignal(peerId, { type: "offer", description: peer.localDescription });
+    }
+  }
+}
+
+function getOrCreatePeer(peerId) {
+  const existing = voicePeers.get(peerId);
+  if (existing) return existing;
+
+  const peer = new RTCPeerConnection(rtcConfig);
+  peer.__offered = false;
+  if (localStream) {
+    for (const track of localStream.getTracks()) peer.addTrack(track, localStream);
+  }
+  peer.onicecandidate = (event) => {
+    if (event.candidate) sendVoiceSignal(peerId, { type: "candidate", candidate: event.candidate }).catch(() => {});
+  };
+  peer.ontrack = (event) => {
+    let audio = remoteAudios.get(peerId);
+    if (!audio) {
+      audio = document.createElement("audio");
+      audio.autoplay = true;
+      audio.playsInline = true;
+      remoteAudioRoot.append(audio);
+      remoteAudios.set(peerId, audio);
+    }
+    audio.srcObject = event.streams[0];
+  };
+  peer.onconnectionstatechange = () => {
+    if (["closed", "failed", "disconnected"].includes(peer.connectionState)) closePeer(peerId);
+  };
+  voicePeers.set(peerId, peer);
+  return peer;
+}
+
+function closePeer(peerId) {
+  const peer = voicePeers.get(peerId);
+  if (peer) peer.close();
+  voicePeers.delete(peerId);
+  const audio = remoteAudios.get(peerId);
+  if (audio) audio.remove();
+  remoteAudios.delete(peerId);
+}
+
+async function handleVoiceSignal(message) {
+  if (!voiceEnabled || !state || !currentUser || message.to !== currentUser.id) return;
+  const peer = getOrCreatePeer(message.from);
+  const signal = message.signal || {};
+  if (signal.type === "offer") {
+    await peer.setRemoteDescription(signal.description);
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+    await sendVoiceSignal(message.from, { type: "answer", description: peer.localDescription });
+  } else if (signal.type === "answer") {
+    if (peer.signalingState !== "stable") await peer.setRemoteDescription(signal.description);
+  } else if (signal.type === "candidate" && signal.candidate) {
+    await peer.addIceCandidate(signal.candidate);
+  }
+}
+
+async function sendVoiceSignal(to, signal) {
+  if (!state) return;
+  await api("/api/voice/signal", { room: state.id, to, signal });
 }
 
 async function loadAdmin() {

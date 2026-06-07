@@ -184,6 +184,22 @@ select:focus {
   color: var(--gold);
 }
 
+.text-button.voice-on {
+  background: rgba(31, 143, 100, 0.28);
+  color: #c8ffe3;
+}
+
+.room-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.remote-audio {
+  display: none;
+}
+
 .game-view {
   width: min(1120px, 100%);
   margin: 0 auto;

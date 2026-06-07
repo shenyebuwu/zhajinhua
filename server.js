@@ -585,8 +585,20 @@ function sendEvent(client, room) {
   client.res.write(`event: state\ndata: ${JSON.stringify(snapshot(room, client.userId))}\n\n`);
 }
 
+function sendClientEvent(client, event, data) {
+  client.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
 function broadcast(room) {
   for (const client of room.clients) sendEvent(client, room);
+}
+
+function relayVoiceSignal(room, fromUserId, toUserId, signal) {
+  for (const client of room.clients) {
+    if (client.userId === toUserId) {
+      sendClientEvent(client, "voice", { from: fromUserId, to: toUserId, signal });
+    }
+  }
 }
 
 async function parseJson(req) {
@@ -848,6 +860,18 @@ async function handleApi(req, res) {
       handleAction(room, user.id, body.action, body);
       broadcast(room);
       json(res, 200, { ok: true, state: snapshot(room, user.id) });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/voice/signal") {
+      const user = requireUser(req);
+      const body = await parseJson(req);
+      const room = getRoom(body.room);
+      if (!room) throw new Error("房间不存在");
+      if (!room.players.some((player) => player.id === user.id)) throw new Error("你不在该房间");
+      if (!room.players.some((player) => player.id === body.to)) throw new Error("语音目标不在房间");
+      if (body.to !== user.id) relayVoiceSignal(room, user.id, body.to, body.signal);
+      json(res, 200, { ok: true });
       return;
     }
 
