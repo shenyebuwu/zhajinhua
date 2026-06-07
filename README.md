@@ -15,7 +15,9 @@
 - 管理员可查看用户和房间、禁用用户、关闭房间
 - 房间长时间不活动会自动解散，默认 `30` 分钟
 - 房主可踢人和转让房主
-- 牌局操作倒计时，默认 `60` 秒超时自动弃牌
+- 牌局操作倒计时，默认 `15` 秒超时自动弃牌
+- 每 30 局每位玩家有一次延时 30 秒机会
+- 比牌结束本局后自动进入下一局
 - 本局结算明细和管理日志
 - 房间邀请二维码
 - 房间内支持浏览器开麦语音，音频走 WebRTC 点对点连接
@@ -83,7 +85,10 @@ services:
       MAX_FAILED_JOINS: 20
       ROOM_IDLE_MINUTES: 30
       SESSION_TTL_HOURS: 168
-      TURN_TIMEOUT_SECONDS: 60
+      TURN_TIMEOUT_SECONDS: 15
+      TURN_EXTENSION_SECONDS: 30
+      EXTENSION_INTERVAL_ROUNDS: 30
+      AUTO_NEXT_DELAY_SECONDS: 3
       # ADMIN_USERNAME: admin
       # ADMIN_PASSWORD: change-me
     volumes:
@@ -122,7 +127,10 @@ services:
 | `MAX_FAILED_JOINS` | `20` | 同一来源 10 分钟内允许输错房间密码的次数 |
 | `ROOM_IDLE_MINUTES` | `30` | 房间无操作后自动解散的分钟数 |
 | `SESSION_TTL_HOURS` | `168` | 登录会话有效小时数 |
-| `TURN_TIMEOUT_SECONDS` | `60` | 轮到玩家操作时的倒计时秒数，超时自动弃牌 |
+| `TURN_TIMEOUT_SECONDS` | `15` | 轮到玩家操作时的倒计时秒数，超时自动弃牌 |
+| `TURN_EXTENSION_SECONDS` | `30` | 延时按钮增加的秒数 |
+| `EXTENSION_INTERVAL_ROUNDS` | `30` | 每隔多少局可获得一次延时机会 |
+| `AUTO_NEXT_DELAY_SECONDS` | `3` | 比牌结束本局后自动开下一局的等待秒数 |
 | `ADMIN_USERNAME` | 空 | 可选，启动时自动创建管理员账号 |
 | `ADMIN_PASSWORD` | 空 | 可选，配合 `ADMIN_USERNAME` 使用 |
 

@@ -15,7 +15,10 @@ const MAX_PLAYERS = Number(process.env.MAX_PLAYERS || 17);
 const MIN_PLAYERS = 2;
 const ROOM_IDLE_MS = Number(process.env.ROOM_IDLE_MINUTES || 30) * 60 * 1000;
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_HOURS || 168) * 60 * 60 * 1000;
-const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_SECONDS || 60) * 1000;
+const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_SECONDS || 15) * 1000;
+const TURN_EXTENSION_MS = Number(process.env.TURN_EXTENSION_SECONDS || 30) * 1000;
+const EXTENSION_INTERVAL_ROUNDS = Number(process.env.EXTENSION_INTERVAL_ROUNDS || 30);
+const AUTO_NEXT_DELAY_MS = Number(process.env.AUTO_NEXT_DELAY_SECONDS || 3) * 1000;
 const JOIN_WINDOW_MS = 1000 * 60 * 10;
 const MAX_FAILED_JOINS = Number(process.env.MAX_FAILED_JOINS || 20);
 
@@ -248,6 +251,7 @@ function createRoom(requestedId, user, settings = {}) {
     roundNo: 0,
     winnerId: null,
     lastResult: null,
+    autoNextTimer: null,
     log: [],
     clients: new Set(),
     createdAt: now(),
@@ -273,6 +277,15 @@ function appendLog(room, text) {
 
 function setTurnDeadline(room) {
   room.turnDeadlineAt = room.phase === "playing" ? now() + TURN_TIMEOUT_MS : null;
+}
+
+function extensionKey(room) {
+  return Math.floor(Math.max(0, room.roundNo - 1) / EXTENSION_INTERVAL_ROUNDS);
+}
+
+function canUseExtension(room, player) {
+  if (!player || room.phase !== "playing" || player.id !== (currentPlayer(room) || {}).id) return false;
+  return player.lastExtensionKey !== extensionKey(room);
 }
 
 function activePlayers(room) {
@@ -418,6 +431,10 @@ function startHand(room) {
   room.roundNo += 1;
   room.winnerId = null;
   room.lastResult = null;
+  if (room.autoNextTimer) {
+    clearTimeout(room.autoNextTimer);
+    room.autoNextTimer = null;
+  }
   room.happyBonuses = [];
   room.dealerIndex = (room.dealerIndex + 1) % room.players.length;
 
@@ -432,6 +449,7 @@ function startHand(room) {
     player.happyPaid = false;
     player.inHand = player.chips > 0;
     player.betThisHand = 0;
+    if (typeof player.lastExtensionKey !== "number") player.lastExtensionKey = -1;
     if (player.inHand) {
       player.folded = false;
       player.hand = [room.deck.pop(), room.deck.pop(), room.deck.pop()];
@@ -445,7 +463,7 @@ function startHand(room) {
   appendLog(room, `轮到 ${room.players[room.turnIndex].name}`);
 }
 
-function settleIfNeeded(room, reason = "") {
+function settleIfNeeded(room, reason = "", options = {}) {
   const active = activePlayers(room);
   if (room.phase !== "playing" || active.length > 1) return false;
   if (active.length === 1) {
@@ -478,9 +496,23 @@ function settleIfNeeded(room, reason = "") {
     room.turnDeadlineAt = null;
     appendLog(room, `${winner.name} 赢得 ${room.pot} 筹码`);
     room.pot = 0;
+    if (options.autoNext) scheduleAutoNext(room);
     return true;
   }
   return false;
+}
+
+function scheduleAutoNext(room) {
+  if (room.autoNextTimer || alivePlayers(room).length < MIN_PLAYERS) return;
+  appendLog(room, `${Math.ceil(AUTO_NEXT_DELAY_MS / 1000)} 秒后自动下一局`);
+  room.autoNextTimer = setTimeout(() => {
+    room.autoNextTimer = null;
+    if (room.phase === "roundEnd" && alivePlayers(room).length >= MIN_PLAYERS) {
+      startHand(room);
+      broadcast(room);
+    }
+  }, AUTO_NEXT_DELAY_MS);
+  room.autoNextTimer.unref?.();
 }
 
 function advanceTurn(room) {
@@ -614,6 +646,9 @@ function snapshot(room, viewerId) {
     turnPlayerId: turn ? turn.id : null,
     turnDeadlineAt: room.turnDeadlineAt,
     turnTimeoutSeconds: Math.floor(TURN_TIMEOUT_MS / 1000),
+    turnExtensionSeconds: Math.floor(TURN_EXTENSION_MS / 1000),
+    extensionIntervalRounds: EXTENSION_INTERVAL_ROUNDS,
+    canExtendTurn: viewer ? canUseExtension(room, viewer) : false,
     turnCount: room.turnCount,
     roundNo: room.roundNo,
     winnerId: room.winnerId,
@@ -764,6 +799,14 @@ function handleAction(room, playerId, action, payload) {
   }
 
   const player = requireTurn(room, playerId);
+  if (action === "extend") {
+    if (!canUseExtension(room, player)) throw new Error(`每 ${EXTENSION_INTERVAL_ROUNDS} 局只能延时一次`);
+    player.lastExtensionKey = extensionKey(room);
+    room.turnDeadlineAt = Math.max(room.turnDeadlineAt || now(), now()) + TURN_EXTENSION_MS;
+    appendLog(room, `${player.name} 使用延时 ${Math.floor(TURN_EXTENSION_MS / 1000)} 秒`);
+    return;
+  }
+
   if (action === "see") {
     player.seen = true;
     appendLog(room, `${player.name} 看牌`);
@@ -825,7 +868,7 @@ function handleAction(room, playerId, action, payload) {
     target.revealedBy = "compare";
     loser.folded = true;
     appendLog(room, `${player.name} 支付 ${paid} 与 ${target.name} 比牌，${loser.name} 出局`);
-    if (!settleIfNeeded(room, "比牌结束")) advanceTurn(room);
+    if (!settleIfNeeded(room, "比牌结束", { autoNext: true })) advanceTurn(room);
     return;
   }
 

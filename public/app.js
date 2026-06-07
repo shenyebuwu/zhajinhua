@@ -344,6 +344,8 @@ function renderControls() {
   doubleRaise.disabled = !myTurn;
   const fold = addButton("弃牌", "danger", () => act("fold"));
   fold.disabled = !myTurn;
+  const extend = addButton(`延时 ${state.turnExtensionSeconds || 30}s`, "secondary", () => act("extend"));
+  extend.disabled = !myTurn || !state.canExtendTurn;
 
   const compareWrap = document.createElement("div");
   compareWrap.className = "compare-select";

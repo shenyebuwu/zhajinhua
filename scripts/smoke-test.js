@@ -7,6 +7,8 @@ const path = require("path");
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "zjh-test-"));
 process.env.ROOM_IDLE_MINUTES = "30";
+process.env.TURN_TIMEOUT_SECONDS = "15";
+process.env.AUTO_NEXT_DELAY_SECONDS = "0";
 
 const { createGameServer, compareHands, evaluateHand, __test } = require("../server");
 
@@ -125,7 +127,7 @@ async function main() {
 
   const rejoin = await post(base, "/api/room/join", { room: "TEST", password: "secret" }, bobToken);
   assert.strictEqual(rejoin.state.players.length, 2);
-  assert.ok(Number.isFinite(rejoin.state.turnTimeoutSeconds));
+  assert.strictEqual(rejoin.state.turnTimeoutSeconds, 15);
 
   const carol = await post(base, "/api/auth/register", {
     username: "carol",
@@ -158,6 +160,8 @@ async function main() {
 
   const stateForAlice = await get(base, "/api/state?room=TEST", alice.token);
   const turnToken = stateForAlice.turnPlayerId === alice.user.id ? alice.token : bobToken;
+  const extended = await post(base, "/api/action", { room: "TEST", action: "extend" }, turnToken);
+  assert.strictEqual(extended.state.canExtendTurn, false);
   const seen = await post(base, "/api/action", { room: "TEST", action: "see" }, turnToken);
   const seenPlayer = seen.state.players.find((player) => player.id === seen.state.viewerId);
   assert.notDeepStrictEqual(seenPlayer.hand, ["背面", "背面", "背面"]);
@@ -195,6 +199,10 @@ async function main() {
   const revealedPlayers = compared.state.players.filter((player) => player.revealed);
   assert.strictEqual(revealedPlayers.length, 2);
   assert.ok(revealedPlayers.every((player) => player.hand.every((item) => item !== "背面")));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const autoNext = await get(base, "/api/state?room=CMP", alice.token);
+  assert.strictEqual(autoNext.roundNo, 2);
+  assert.strictEqual(autoNext.phase, "playing");
 
   const admin = await get(base, "/api/admin/summary", alice.token);
   assert.strictEqual(admin.rooms.length, 3);
