@@ -30,7 +30,8 @@ const createPasswordInput = document.querySelector("#createPasswordInput");
 const createPlayerLimitInput = document.querySelector("#createPlayerLimitInput");
 const createAnteInput = document.querySelector("#createAnteInput");
 const createChipsInput = document.querySelector("#createChipsInput");
-const createRaiseInput = document.querySelector("#createRaiseInput");
+const createBlindLimitInput = document.querySelector("#createBlindLimitInput");
+const createSeenLimitInput = document.querySelector("#createSeenLimitInput");
 const joinRoomInput = document.querySelector("#joinRoomInput");
 const joinPasswordInput = document.querySelector("#joinPasswordInput");
 const copyRoomBtn = document.querySelector("#copyRoomBtn");
@@ -161,7 +162,8 @@ async function createRoom(event) {
       playerLimit: createPlayerLimitInput.value,
       ante: createAnteInput.value,
       startingChips: createChipsInput.value,
-      maxRaiseMultiplier: createRaiseInput.value
+      blindMaxStakeMultiplier: createBlindLimitInput.value,
+      seenMaxStakeMultiplier: createSeenLimitInput.value
     });
     enterRoom(result.state);
   } catch (error) {
@@ -332,16 +334,20 @@ function renderControls() {
 
   const myTurn = state.turnPlayerId === me.id;
   const callCost = state.currentStake * (me.seen ? 2 : 1);
+  const maxStakeMultiplier = me.seen ? state.seenMaxStakeMultiplier : state.blindMaxStakeMultiplier;
+  const maxStake = state.ante * maxStakeMultiplier;
   const compareTargets = state.players.filter((p) => p.id !== me.id && p.inHand && !p.folded);
 
   const see = addButton(me.seen ? "已看牌" : "看牌", "secondary", () => act("see"));
   see.disabled = me.seen || !me.inHand || me.folded;
   const call = addButton(`${me.seen ? "明跟" : "闷跟"} ${callCost}`, "primary", () => act("call"));
-  call.disabled = !myTurn;
-  const raise = addButton(`加到 ${state.currentStake + state.ante}`, "secondary", () => act("raise", { stake: state.currentStake + state.ante }));
-  raise.disabled = !myTurn;
-  const doubleRaise = addButton(`加到 ${state.currentStake + state.ante * 3}`, "secondary", () => act("raise", { stake: state.currentStake + state.ante * 3 }));
-  doubleRaise.disabled = !myTurn;
+  call.disabled = !myTurn || state.currentStake > maxStake;
+  const nextStake = state.currentStake + state.ante;
+  const fastStake = state.currentStake + state.ante * 3;
+  const raise = addButton(`加到 ${nextStake}`, "secondary", () => act("raise", { stake: nextStake }));
+  raise.disabled = !myTurn || nextStake > maxStake;
+  const doubleRaise = addButton(`加到 ${fastStake}`, "secondary", () => act("raise", { stake: fastStake }));
+  doubleRaise.disabled = !myTurn || fastStake > maxStake;
   const fold = addButton("弃牌", "danger", () => act("fold"));
   fold.disabled = !myTurn;
   const extend = addButton(`延时 ${state.turnExtensionSeconds || 30}s`, "secondary", () => act("extend"));

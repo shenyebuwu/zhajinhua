@@ -9,10 +9,12 @@ const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
-const STARTING_CHIPS = Number(process.env.STARTING_CHIPS || 1000);
-const ANTE = Number(process.env.ANTE || 10);
+const STARTING_CHIPS = Number(process.env.STARTING_CHIPS || 100);
+const ANTE = Number(process.env.ANTE || 1);
 const MAX_PLAYERS = Number(process.env.MAX_PLAYERS || 17);
 const MIN_PLAYERS = 2;
+const BLIND_MAX_STAKE_MULTIPLIER = Number(process.env.BLIND_MAX_STAKE_MULTIPLIER || 10);
+const SEEN_MAX_STAKE_MULTIPLIER = Number(process.env.SEEN_MAX_STAKE_MULTIPLIER || 20);
 const ROOM_IDLE_MS = Number(process.env.ROOM_IDLE_MINUTES || 30) * 60 * 1000;
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_HOURS || 168) * 60 * 60 * 1000;
 const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_SECONDS || 15) * 1000;
@@ -235,7 +237,13 @@ function createRoom(requestedId, user, settings = {}) {
     playerLimit: sanitizePlayerLimit(settings.playerLimit),
     startingChips: sanitizeNumber(settings.startingChips, STARTING_CHIPS, ante * 5, 1000000),
     ante,
-    maxRaiseMultiplier: sanitizeNumber(settings.maxRaiseMultiplier, 20, 2, 100),
+    blindMaxStakeMultiplier: sanitizeNumber(settings.blindMaxStakeMultiplier, BLIND_MAX_STAKE_MULTIPLIER, 1, 100),
+    seenMaxStakeMultiplier: sanitizeNumber(
+      settings.seenMaxStakeMultiplier ?? settings.maxRaiseMultiplier,
+      SEEN_MAX_STAKE_MULTIPLIER,
+      1,
+      100
+    ),
     passwordSalt,
     passwordHash: cleanPassword ? hashPassword(cleanPassword, passwordSalt) : null,
     phase: "lobby",
@@ -656,7 +664,8 @@ function snapshot(room, viewerId) {
     maxPlayers: room.playerLimit,
     deployMaxPlayers: MAX_PLAYERS,
     startingChips: room.startingChips,
-    maxRaiseMultiplier: room.maxRaiseMultiplier,
+    blindMaxStakeMultiplier: room.blindMaxStakeMultiplier,
+    seenMaxStakeMultiplier: room.seenMaxStakeMultiplier,
     happyBonuses: room.happyBonuses || [],
     hasPassword: Boolean(room.passwordHash),
     players: room.players.map((p) => publicPlayer(p, viewerId, room)),
@@ -693,6 +702,15 @@ function relayVoiceSignal(room, fromUserId, toUserId, signal) {
       sendClientEvent(client, "voice", { from: fromUserId, to: toUserId, signal });
     }
   }
+}
+
+function stakeLimitForPlayer(room, player) {
+  const multiplier = player.seen ? room.seenMaxStakeMultiplier : room.blindMaxStakeMultiplier;
+  return {
+    multiplier,
+    maxStake: room.ante * multiplier,
+    label: player.seen ? "看牌" : "闷牌"
+  };
 }
 
 async function parseJson(req) {
@@ -821,6 +839,10 @@ function handleAction(room, playerId, action, payload) {
   }
 
   if (action === "call") {
+    const limit = stakeLimitForPlayer(room, player);
+    if (room.currentStake > limit.maxStake) {
+      throw new Error(`${limit.label}单注最高为底注的 ${limit.multiplier} 倍`);
+    }
     const wasBlind = !player.seen;
     const cost = room.currentStake * (player.seen ? 2 : 1);
     const paid = pay(room, player, cost);
@@ -838,8 +860,9 @@ function handleAction(room, playerId, action, payload) {
     if (!Number.isFinite(stake) || stake <= room.currentStake || stake % room.ante !== 0) {
       throw new Error(`加注需高于当前注且为 ${room.ante} 的倍数`);
     }
-    if (stake > room.ante * room.maxRaiseMultiplier) {
-      throw new Error(`单注最高为底注的 ${room.maxRaiseMultiplier} 倍`);
+    const limit = stakeLimitForPlayer(room, player);
+    if (stake > limit.maxStake) {
+      throw new Error(`${limit.label}单注最高为底注的 ${limit.multiplier} 倍`);
     }
     const wasBlind = !player.seen;
     room.currentStake = stake;

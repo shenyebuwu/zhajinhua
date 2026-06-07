@@ -8,8 +8,10 @@ services:
     environment:
       PORT: 3000
       DATA_DIR: /app/data
-      STARTING_CHIPS: 1000
-      ANTE: 10
+      STARTING_CHIPS: 100
+      ANTE: 1
+      BLIND_MAX_STAKE_MULTIPLIER: 10
+      SEEN_MAX_STAKE_MULTIPLIER: 20
       MAX_PLAYERS: 17
       MAX_FAILED_JOINS: 20
       ROOM_IDLE_MINUTES: 30

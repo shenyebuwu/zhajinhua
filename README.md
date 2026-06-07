@@ -11,7 +11,7 @@
 - 登录后可修改个人昵称和密码
 - 同一账号在同一房间只占一个座位
 - 房间号加入，可复制邀请链接
-- 创建房间时可设置房间密码、人数上限、底注、初始筹码、最大加注倍数
+- 创建房间时可设置房间密码、人数上限、底注、初始筹码、闷牌封顶和看牌封顶
 - 管理员可查看用户和房间、禁用用户、关闭房间
 - 房间长时间不活动会自动解散，默认 `30` 分钟
 - 房主可踢人和转让房主
@@ -79,8 +79,10 @@ services:
     environment:
       PORT: 3000
       DATA_DIR: /app/data
-      STARTING_CHIPS: 1000
-      ANTE: 10
+      STARTING_CHIPS: 100
+      ANTE: 1
+      BLIND_MAX_STAKE_MULTIPLIER: 10
+      SEEN_MAX_STAKE_MULTIPLIER: 20
       MAX_PLAYERS: 17
       MAX_FAILED_JOINS: 20
       ROOM_IDLE_MINUTES: 30
@@ -121,8 +123,10 @@ services:
 | --- | --- | --- |
 | `PORT` | `3000` | 容器内监听端口 |
 | `DATA_DIR` | `./data` | 用户数据存储目录，容器中建议设为 `/app/data` 并挂载 volume |
-| `STARTING_CHIPS` | `1000` | 每位玩家初始筹码 |
-| `ANTE` | `10` | 底注 |
+| `STARTING_CHIPS` | `100` | 每位玩家初始筹码 |
+| `ANTE` | `1` | 底注 |
+| `BLIND_MAX_STAKE_MULTIPLIER` | `10` | 闷牌单注最高为底注的倍数 |
+| `SEEN_MAX_STAKE_MULTIPLIER` | `20` | 看牌单注最高为底注的倍数 |
 | `MAX_PLAYERS` | `17` | 部署级最大人数上限。每个房间创建时仍可选择更小的人数上限 |
 | `MAX_FAILED_JOINS` | `20` | 同一来源 10 分钟内允许输错房间密码的次数 |
 | `ROOM_IDLE_MINUTES` | `30` | 房间无操作后自动解散的分钟数 |
@@ -176,7 +180,7 @@ services:
 - 弃牌后牌面不公开。
 - 比牌后双方牌面公开。
 
-看牌后跟注和加注按双倍支付；比牌需要先看牌。
+下注封顶按底注计算：默认闷牌单注最高 `10` 个底注，看牌单注最高 `20` 个底注。看牌后跟注和加注按双倍支付；比牌需要先看牌。
 
 ## 开发
 

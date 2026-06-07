@@ -100,17 +100,26 @@ async function main() {
   });
   let bobToken = bob.token;
 
+  const defaultRoom = await post(base, "/api/room/create", { room: "DFLT" }, alice.token);
+  assert.strictEqual(defaultRoom.state.ante, 1);
+  assert.strictEqual(defaultRoom.state.startingChips, 100);
+  assert.strictEqual(defaultRoom.state.blindMaxStakeMultiplier, 10);
+  assert.strictEqual(defaultRoom.state.seenMaxStakeMultiplier, 20);
+
   const created = await post(base, "/api/room/create", {
     room: "TEST",
     password: "secret",
     playerLimit: 3,
     ante: 20,
     startingChips: 800,
-    maxRaiseMultiplier: 10
+    blindMaxStakeMultiplier: 10,
+    seenMaxStakeMultiplier: 20
   }, alice.token);
   assert.strictEqual(created.roomId, "TEST");
   assert.strictEqual(created.state.maxPlayers, 3);
   assert.strictEqual(created.state.ante, 20);
+  assert.strictEqual(created.state.blindMaxStakeMultiplier, 10);
+  assert.strictEqual(created.state.seenMaxStakeMultiplier, 20);
 
   await assert.rejects(
     () => post(base, "/api/room/join", { room: "TEST", password: "wrong" }, bob.token),
@@ -183,6 +192,25 @@ async function main() {
   assert.deepStrictEqual(foldedPlayer.hand, ["背面", "背面", "背面"]);
   assert.strictEqual(foldedPlayer.rank, null);
 
+  await post(base, "/api/room/join", { room: "DFLT" }, bobToken);
+  const capStarted = await post(base, "/api/action", { room: "DFLT", action: "start" }, alice.token);
+  const capToken = capStarted.state.turnPlayerId === alice.user.id ? alice.token : bobToken;
+  const otherCapToken = capStarted.state.turnPlayerId === alice.user.id ? bobToken : alice.token;
+  await assert.rejects(
+    () => post(base, "/api/action", { room: "DFLT", action: "raise", stake: 11 }, capToken),
+    /闷牌单注最高为底注的 10 倍/
+  );
+  await post(base, "/api/action", { room: "DFLT", action: "see" }, capToken);
+  await assert.rejects(
+    () => post(base, "/api/action", { room: "DFLT", action: "raise", stake: 21 }, capToken),
+    /看牌单注最高为底注的 20 倍/
+  );
+  await post(base, "/api/action", { room: "DFLT", action: "raise", stake: 20 }, capToken);
+  await assert.rejects(
+    () => post(base, "/api/action", { room: "DFLT", action: "call" }, otherCapToken),
+    /闷牌单注最高为底注的 10 倍/
+  );
+
   await post(base, "/api/room/create", {
     room: "CMP",
     playerLimit: 2,
@@ -205,7 +233,7 @@ async function main() {
   assert.strictEqual(autoNext.phase, "playing");
 
   const admin = await get(base, "/api/admin/summary", alice.token);
-  assert.strictEqual(admin.rooms.length, 3);
+  assert.strictEqual(admin.rooms.length, 4);
   assert.ok(admin.logs.length >= 3);
   assert.strictEqual(admin.users.length, 3);
 

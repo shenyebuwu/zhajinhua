@@ -100,17 +100,23 @@
               </label>
               <label>
                 底注
-                <input id="createAnteInput" type="number" min="1" inputmode="numeric" value="10">
+                <input id="createAnteInput" type="number" min="1" inputmode="numeric" value="1">
               </label>
             </div>
             <div class="form-row">
               <label>
                 初始筹码
-                <input id="createChipsInput" type="number" min="50" inputmode="numeric" value="1000">
+                <input id="createChipsInput" type="number" min="5" inputmode="numeric" value="100">
               </label>
               <label>
-                最大加注倍数
-                <input id="createRaiseInput" type="number" min="2" max="100" inputmode="numeric" value="20">
+                闷牌封顶
+                <input id="createBlindLimitInput" type="number" min="1" max="100" inputmode="numeric" value="10">
+              </label>
+            </div>
+            <div class="form-row">
+              <label>
+                看牌封顶
+                <input id="createSeenLimitInput" type="number" min="1" max="100" inputmode="numeric" value="20">
               </label>
             </div>
             <button class="primary" type="submit">创建并进入</button>
