@@ -125,6 +125,28 @@ function requirePassword(password) {
   if (sanitizePassword(password).length < 4) throw new Error("密码至少 4 位");
 }
 
+function verifyUserPassword(user, password) {
+  const candidate = hashPassword(sanitizePassword(password), user.passwordSalt);
+  return crypto.timingSafeEqual(Buffer.from(candidate, "hex"), Buffer.from(user.passwordHash, "hex"));
+}
+
+function setUserPassword(user, password) {
+  requirePassword(password);
+  user.passwordSalt = newId(8);
+  user.passwordHash = hashPassword(sanitizePassword(password), user.passwordSalt);
+}
+
+function syncUserDisplayName(user) {
+  for (const room of rooms.values()) {
+    const player = room.players.find((item) => item.userId === user.id);
+    if (player) {
+      player.name = user.displayName;
+      room.lastActiveAt = now();
+      broadcast(room);
+    }
+  }
+}
+
 function createSession(user) {
   const token = newId(24);
   sessions.set(token, { userId: user.id, expiresAt: now() + SESSION_TTL_MS });
@@ -764,10 +786,7 @@ async function handleApi(req, res) {
       const username = sanitizeUsername(body.username);
       const user = users.find((item) => item.username === username);
       if (!user || user.disabled) throw new Error("账号不存在或已被禁用");
-      const candidate = hashPassword(sanitizePassword(body.password), user.passwordSalt);
-      if (!crypto.timingSafeEqual(Buffer.from(candidate, "hex"), Buffer.from(user.passwordHash, "hex"))) {
-        throw new Error("用户名或密码错误");
-      }
+      if (!verifyUserPassword(user, body.password)) throw new Error("用户名或密码错误");
       user.lastLoginAt = now();
       saveUsers();
       const token = createSession(user);
@@ -777,6 +796,27 @@ async function handleApi(req, res) {
 
     if (req.method === "GET" && url.pathname === "/api/me") {
       json(res, 200, { user: publicUser(requireUser(req, url)) });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/profile") {
+      const user = requireUser(req);
+      const body = await parseJson(req);
+      const displayName = sanitizeName(body.displayName || user.displayName);
+      const newPassword = sanitizePassword(body.newPassword);
+
+      if (displayName !== user.displayName) {
+        user.displayName = displayName;
+        syncUserDisplayName(user);
+      }
+
+      if (newPassword) {
+        if (!verifyUserPassword(user, body.currentPassword)) throw new Error("当前密码不正确");
+        setUserPassword(user, newPassword);
+      }
+
+      saveUsers();
+      json(res, 200, { user: publicUser(user) });
       return;
     }
 

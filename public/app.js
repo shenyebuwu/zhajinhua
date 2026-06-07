@@ -15,6 +15,10 @@ const authSubmit = document.querySelector("#authSubmit");
 const accountTitle = document.querySelector("#accountTitle");
 const adminBtn = document.querySelector("#adminBtn");
 const logoutBtn = document.querySelector("#logoutBtn");
+const profileForm = document.querySelector("#profileForm");
+const profileDisplayNameInput = document.querySelector("#profileDisplayNameInput");
+const profileCurrentPasswordInput = document.querySelector("#profileCurrentPasswordInput");
+const profileNewPasswordInput = document.querySelector("#profileNewPasswordInput");
 const createRoomForm = document.querySelector("#createRoomForm");
 const joinRoomForm = document.querySelector("#joinRoomForm");
 const createRoomInput = document.querySelector("#createRoomInput");
@@ -53,6 +57,7 @@ joinRoomInput.value = inviteRoom;
 loginTab.addEventListener("click", () => setAuthMode("login"));
 registerTab.addEventListener("click", () => setAuthMode("register"));
 authForm.addEventListener("submit", submitAuth);
+profileForm.addEventListener("submit", saveProfile);
 createRoomForm.addEventListener("submit", createRoom);
 joinRoomForm.addEventListener("submit", joinRoom);
 logoutBtn.addEventListener("click", logout);
@@ -99,6 +104,24 @@ async function submitAuth(event) {
     currentUser = result.user;
     localStorage.setItem("zjh.token", token);
     showLobby();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function saveProfile(event) {
+  event.preventDefault();
+  try {
+    const result = await api("/api/profile", {
+      displayName: profileDisplayNameInput.value,
+      currentPassword: profileCurrentPasswordInput.value,
+      newPassword: profileNewPasswordInput.value
+    });
+    currentUser = result.user;
+    profileCurrentPasswordInput.value = "";
+    profileNewPasswordInput.value = "";
+    renderAccount();
+    toast("资料已保存");
   } catch (error) {
     toast(error.message);
   }
@@ -326,10 +349,15 @@ function showAuth() {
 }
 
 function showLobby() {
-  accountTitle.textContent = `${currentUser.displayName} (${currentUser.username})`;
-  adminBtn.classList.toggle("hidden", currentUser.role !== "admin");
+  renderAccount();
   switchView(lobbyView);
   if (inviteRoom) joinRoomInput.value = inviteRoom;
+}
+
+function renderAccount() {
+  accountTitle.textContent = `${currentUser.displayName} (${currentUser.username})`;
+  profileDisplayNameInput.value = currentUser.displayName;
+  adminBtn.classList.toggle("hidden", currentUser.role !== "admin");
 }
 
 function showGame() {

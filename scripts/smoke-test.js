@@ -93,6 +93,17 @@ async function main() {
   const rejoin = await post(base, "/api/room/join", { room: "TEST", password: "secret" }, bob.token);
   assert.strictEqual(rejoin.state.players.length, 2);
 
+  const updatedBob = await post(base, "/api/profile", {
+    displayName: "小李二",
+    currentPassword: "pass1234",
+    newPassword: "newpass123"
+  }, bob.token);
+  assert.strictEqual(updatedBob.user.displayName, "小李二");
+  const bobLogin = await post(base, "/api/auth/login", { username: "bob", password: "newpass123" });
+  assert.strictEqual(bobLogin.user.displayName, "小李二");
+  const renamedRoom = await get(base, "/api/state?room=TEST", bob.token);
+  assert.strictEqual(renamedRoom.players.find((player) => player.id === bob.user.id).name, "小李二");
+
   const started = await post(base, "/api/action", { room: "TEST", action: "start" }, alice.token);
   assert.strictEqual(started.state.phase, "playing");
   const aliceView = started.state.players.find((player) => player.id === started.state.viewerId);

@@ -47,6 +47,23 @@
         </header>
 
         <section class="lobby-grid">
+          <form id="profileForm" class="tool-panel">
+            <h3>个人资料</h3>
+            <label>
+              昵称
+              <input id="profileDisplayNameInput" maxlength="16" autocomplete="nickname">
+            </label>
+            <label>
+              当前密码
+              <input id="profileCurrentPasswordInput" type="password" maxlength="72" autocomplete="current-password" placeholder="改密码时填写">
+            </label>
+            <label>
+              新密码
+              <input id="profileNewPasswordInput" type="password" maxlength="72" autocomplete="new-password" placeholder="留空则不修改密码">
+            </label>
+            <button class="primary" type="submit">保存资料</button>
+          </form>
+
           <form id="createRoomForm" class="tool-panel">
             <h3>创建房间</h3>
             <label>
