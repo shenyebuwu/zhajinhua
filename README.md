@@ -7,9 +7,12 @@
 ## 功能
 
 - 浏览器直接游玩，无需安装 App
+- 注册/登录账号后创建或加入房间
+- 同一账号在同一房间只占一个座位
 - 房间号加入，可复制邀请链接
-- 创建房间时可设置房间密码
-- 创建房间时可设置人数上限，部署级最大人数默认 `17`
+- 创建房间时可设置房间密码、人数上限、底注、初始筹码、最大加注倍数
+- 管理员可查看用户和房间、禁用用户、关闭房间
+- 房间长时间不活动会自动解散，默认 `30` 分钟
 - 实时同步牌局状态
 - 看牌、闷跟、明跟、加注、比牌、弃牌
 - 自动洗牌、发牌、判型、结算、下一局
@@ -67,19 +70,21 @@ services:
       - "3000:3000"
     environment:
       PORT: 3000
+      DATA_DIR: /app/data
       STARTING_CHIPS: 1000
       ANTE: 10
       MAX_PLAYERS: 17
       MAX_FAILED_JOINS: 20
+      ROOM_IDLE_MINUTES: 30
+      SESSION_TTL_HOURS: 168
+      # ADMIN_USERNAME: admin
+      # ADMIN_PASSWORD: change-me
+    volumes:
+      - ./data:/app/data
 ```
 
-把 `YOUR_GITHUB_USERNAME` 和 `YOUR_REPOSITORY_NAME` 替换成实际值。
+把 `YOUR_GITHUB_USERNAME` 和 `YOUR_REPOSITORY_NAME` 替换成实际值，例如 `ghcr.io/shenyebuwu/zhajinhua:latest`。
 
-例如：
-
-```yaml
-image: ghcr.io/shenyebuwu/zhajinhua:latest
-```
 
 ## 公网部署建议
 
@@ -102,10 +107,23 @@ image: ghcr.io/shenyebuwu/zhajinhua:latest
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `PORT` | `3000` | 容器内监听端口 |
+| `DATA_DIR` | `./data` | 用户数据存储目录，容器中建议设为 `/app/data` 并挂载 volume |
 | `STARTING_CHIPS` | `1000` | 每位玩家初始筹码 |
 | `ANTE` | `10` | 底注 |
 | `MAX_PLAYERS` | `17` | 部署级最大人数上限。每个房间创建时仍可选择更小的人数上限 |
 | `MAX_FAILED_JOINS` | `20` | 同一来源 10 分钟内允许输错房间密码的次数 |
+| `ROOM_IDLE_MINUTES` | `30` | 房间无操作后自动解散的分钟数 |
+| `SESSION_TTL_HOURS` | `168` | 登录会话有效小时数 |
+| `ADMIN_USERNAME` | 空 | 可选，启动时自动创建管理员账号 |
+| `ADMIN_PASSWORD` | 空 | 可选，配合 `ADMIN_USERNAME` 使用 |
+
+## 账号和管理
+
+第一次注册的用户会自动成为管理员。也可以通过环境变量 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 在启动时预置管理员。
+
+管理员登录后会看到“管理”按钮，可以查看当前用户和房间，禁用用户或关闭房间。
+
+用户数据存储在 `DATA_DIR/users.json`。正式部署时请挂载数据卷，避免容器重建后用户丢失。
 
 ## 房间人数
 

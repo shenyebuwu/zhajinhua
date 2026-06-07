@@ -8,30 +8,91 @@
   </head>
   <body>
     <main id="app" class="app">
-      <section class="join-view" id="joinView">
-        <div class="join-panel">
+      <section class="auth-view" id="authView">
+        <div class="auth-panel">
           <p class="eyebrow">ZHA JIN HUA</p>
           <h1>炸金花</h1>
-          <form id="joinForm" class="join-form">
+          <div class="tabs">
+            <button id="loginTab" class="tab active" type="button">登录</button>
+            <button id="registerTab" class="tab" type="button">注册</button>
+          </div>
+          <form id="authForm" class="join-form">
             <label>
+              用户名
+              <input id="usernameInput" maxlength="24" autocomplete="username" required>
+            </label>
+            <label id="displayNameLabel" class="hidden">
               昵称
-              <input id="nameInput" name="name" maxlength="16" autocomplete="nickname" placeholder="例如：阿明" required>
+              <input id="displayNameInput" maxlength="16" autocomplete="nickname" placeholder="显示在牌桌上的名字">
             </label>
             <label>
+              密码
+              <input id="authPasswordInput" type="password" maxlength="72" autocomplete="current-password" required>
+            </label>
+            <button class="primary" type="submit" id="authSubmit">登录</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="lobby-view hidden" id="lobbyView">
+        <header class="topbar lobby-topbar">
+          <div>
+            <p class="eyebrow">当前账号</p>
+            <h2 id="accountTitle">玩家</h2>
+          </div>
+          <div class="top-actions">
+            <button id="adminBtn" class="secondary hidden" type="button">管理</button>
+            <button id="logoutBtn" class="text-button" type="button">退出</button>
+          </div>
+        </header>
+
+        <section class="lobby-grid">
+          <form id="createRoomForm" class="tool-panel">
+            <h3>创建房间</h3>
+            <label>
               房间号
-              <input id="roomInput" name="room" maxlength="8" autocapitalize="characters" placeholder="留空自动创建">
+              <input id="createRoomInput" maxlength="8" autocapitalize="characters" placeholder="留空自动生成">
             </label>
             <label>
               房间密码
-              <input id="passwordInput" name="password" maxlength="64" autocomplete="off" placeholder="公网/内网穿透时建议填写">
+              <input id="createPasswordInput" maxlength="64" autocomplete="off" placeholder="公网建议填写">
+            </label>
+            <div class="form-row">
+              <label>
+                人数
+                <input id="createPlayerLimitInput" type="number" min="2" max="17" inputmode="numeric" value="10">
+              </label>
+              <label>
+                底注
+                <input id="createAnteInput" type="number" min="1" inputmode="numeric" value="10">
+              </label>
+            </div>
+            <div class="form-row">
+              <label>
+                初始筹码
+                <input id="createChipsInput" type="number" min="50" inputmode="numeric" value="1000">
+              </label>
+              <label>
+                最大加注倍数
+                <input id="createRaiseInput" type="number" min="2" max="100" inputmode="numeric" value="20">
+              </label>
+            </div>
+            <button class="primary" type="submit">创建并进入</button>
+          </form>
+
+          <form id="joinRoomForm" class="tool-panel">
+            <h3>加入房间</h3>
+            <label>
+              房间号
+              <input id="joinRoomInput" maxlength="8" autocapitalize="characters" required>
             </label>
             <label>
-              人数上限
-              <input id="playerLimitInput" name="playerLimit" type="number" min="2" max="17" inputmode="numeric" value="10">
+              房间密码
+              <input id="joinPasswordInput" maxlength="64" autocomplete="off">
             </label>
-            <button class="primary" type="submit">进入房间</button>
+            <button class="primary" type="submit">加入</button>
           </form>
-        </div>
+        </section>
       </section>
 
       <section class="game-view hidden" id="gameView">
@@ -66,14 +127,37 @@
 
         <section class="controls" id="controls"></section>
 
-        <section class="details">
-          <div class="rules">
-            <h3>规则</h3>
-            <p>牌型大小：豹子、同花顺、同花、顺子、对子、单张。看牌后跟注与加注按双倍支付；比牌需先看牌。</p>
+        <details class="mobile-details">
+          <summary>规则与记录</summary>
+          <section class="details">
+            <div class="rules">
+              <h3>规则</h3>
+              <p>牌型大小：豹子、同花顺、同花、顺子、对子、单张。看牌后跟注与加注按双倍支付；比牌需先看牌。</p>
+            </div>
+            <div class="log">
+              <h3>牌局记录</h3>
+              <ol id="logList"></ol>
+            </div>
+          </section>
+        </details>
+      </section>
+
+      <section class="admin-view hidden" id="adminView">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">ADMIN</p>
+            <h2>管理面板</h2>
           </div>
-          <div class="log">
-            <h3>牌局记录</h3>
-            <ol id="logList"></ol>
+          <button id="backLobbyBtn" class="secondary" type="button">返回大厅</button>
+        </header>
+        <section class="admin-grid">
+          <div class="tool-panel">
+            <h3>房间</h3>
+            <div id="adminRooms" class="admin-list"></div>
+          </div>
+          <div class="tool-panel">
+            <h3>用户</h3>
+            <div id="adminUsers" class="admin-list"></div>
           </div>
         </section>
       </section>

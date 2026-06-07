@@ -7,47 +7,65 @@ const crypto = require("crypto");
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, "public");
-const ROOM_TTL_MS = 1000 * 60 * 60 * 8;
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
+const USERS_FILE = path.join(DATA_DIR, "users.json");
 const STARTING_CHIPS = Number(process.env.STARTING_CHIPS || 1000);
 const ANTE = Number(process.env.ANTE || 10);
 const MAX_PLAYERS = Number(process.env.MAX_PLAYERS || 17);
 const MIN_PLAYERS = 2;
+const ROOM_IDLE_MS = Number(process.env.ROOM_IDLE_MINUTES || 30) * 60 * 1000;
+const SESSION_TTL_MS = Number(process.env.SESSION_TTL_HOURS || 168) * 60 * 60 * 1000;
 const JOIN_WINDOW_MS = 1000 * 60 * 10;
 const MAX_FAILED_JOINS = Number(process.env.MAX_FAILED_JOINS || 20);
 
 const rooms = new Map();
 const failedJoins = new Map();
+const sessions = new Map();
+let users = [];
 
 const suits = ["S", "H", "D", "C"];
 const ranks = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
-const rankName = {
-  11: "J",
-  12: "Q",
-  13: "K",
-  14: "A"
-};
-const suitName = {
-  S: "♠",
-  H: "♥",
-  D: "♦",
-  C: "♣"
-};
+const rankName = { 11: "J", 12: "Q", 13: "K", 14: "A" };
+const suitName = { S: "♠", H: "♥", D: "♦", C: "♣" };
 
 function newId(bytes = 8) {
   return crypto.randomBytes(bytes).toString("hex");
 }
 
-function roomId() {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let id = "";
-  for (let i = 0; i < 6; i += 1) {
-    id += alphabet[Math.floor(Math.random() * alphabet.length)];
-  }
-  return id;
+function now() {
+  return Date.now();
 }
 
-function sanitizeRoom(value) {
-  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+function ensureDataDir() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function loadUsers() {
+  ensureDataDir();
+  try {
+    users = JSON.parse(fs.readFileSync(USERS_FILE, "utf8"));
+  } catch {
+    users = [];
+    saveUsers();
+  }
+  seedAdminFromEnv();
+}
+
+function saveUsers() {
+  ensureDataDir();
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), "utf8");
+}
+
+function seedAdminFromEnv() {
+  const username = sanitizeUsername(process.env.ADMIN_USERNAME || "");
+  const password = String(process.env.ADMIN_PASSWORD || "");
+  if (!username || !password || users.some((user) => user.username === username)) return;
+  users.push(createUserRecord(username, password, process.env.ADMIN_DISPLAY_NAME || "管理员", "admin"));
+  saveUsers();
+}
+
+function sanitizeUsername(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9_\-.]/g, "").slice(0, 24);
 }
 
 function sanitizeName(value) {
@@ -55,41 +73,124 @@ function sanitizeName(value) {
   return name || `玩家${Math.floor(Math.random() * 90) + 10}`;
 }
 
+function sanitizeRoom(value) {
+  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+}
+
 function sanitizePassword(value) {
-  return String(value || "").trim().slice(0, 64);
+  return String(value || "").trim().slice(0, 72);
+}
+
+function sanitizeNumber(value, fallback, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(number)));
 }
 
 function sanitizePlayerLimit(value) {
-  const limit = Number(value || MAX_PLAYERS);
-  if (!Number.isFinite(limit)) return MAX_PLAYERS;
-  return Math.max(MIN_PLAYERS, Math.min(MAX_PLAYERS, Math.floor(limit)));
+  return sanitizeNumber(value, Math.min(10, MAX_PLAYERS), MIN_PLAYERS, MAX_PLAYERS);
 }
 
 function hashPassword(password, salt) {
   return crypto.scryptSync(password, salt, 32).toString("hex");
 }
 
-function createRoom(requestedId, password = "", playerLimit = MAX_PLAYERS) {
-  let id = sanitizeRoom(requestedId);
-  while (!id || rooms.has(id)) {
-    id = roomId();
-  }
+function createUserRecord(username, password, displayName, role = "player") {
+  const salt = newId(8);
+  return {
+    id: newId(),
+    username,
+    displayName: sanitizeName(displayName || username),
+    passwordSalt: salt,
+    passwordHash: hashPassword(sanitizePassword(password), salt),
+    role,
+    disabled: false,
+    createdAt: now(),
+    lastLoginAt: null
+  };
+}
 
-  const cleanPassword = sanitizePassword(password);
-  const cleanPlayerLimit = sanitizePlayerLimit(playerLimit);
+function publicUser(user) {
+  if (!user) return null;
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName,
+    role: user.role,
+    disabled: user.disabled
+  };
+}
+
+function requirePassword(password) {
+  if (sanitizePassword(password).length < 4) throw new Error("密码至少 4 位");
+}
+
+function createSession(user) {
+  const token = newId(24);
+  sessions.set(token, { userId: user.id, expiresAt: now() + SESSION_TTL_MS });
+  return token;
+}
+
+function getToken(req, url = null) {
+  const auth = String(req.headers.authorization || "");
+  if (auth.startsWith("Bearer ")) return auth.slice(7);
+  if (url) return url.searchParams.get("token") || "";
+  return "";
+}
+
+function getUserByToken(token) {
+  const session = sessions.get(token);
+  if (!session || session.expiresAt < now()) {
+    if (token) sessions.delete(token);
+    return null;
+  }
+  const user = users.find((item) => item.id === session.userId);
+  if (!user || user.disabled) return null;
+  session.expiresAt = now() + SESSION_TTL_MS;
+  return user;
+}
+
+function requireUser(req, url = null) {
+  const user = getUserByToken(getToken(req, url));
+  if (!user) throw new Error("请先登录");
+  return user;
+}
+
+function requireAdmin(req, url = null) {
+  const user = requireUser(req, url);
+  if (user.role !== "admin") throw new Error("需要管理员权限");
+  return user;
+}
+
+function roomId() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let id = "";
+  for (let i = 0; i < 6; i += 1) id += alphabet[Math.floor(Math.random() * alphabet.length)];
+  return id;
+}
+
+function createRoom(requestedId, user, settings = {}) {
+  let id = sanitizeRoom(requestedId);
+  while (!id || rooms.has(id)) id = roomId();
+
+  const cleanPassword = sanitizePassword(settings.password);
   const passwordSalt = cleanPassword ? newId(8) : null;
+  const ante = sanitizeNumber(settings.ante, ANTE, 1, 10000);
   const room = {
     id,
-    playerLimit: cleanPlayerLimit,
+    playerLimit: sanitizePlayerLimit(settings.playerLimit),
+    startingChips: sanitizeNumber(settings.startingChips, STARTING_CHIPS, ante * 5, 1000000),
+    ante,
+    maxRaiseMultiplier: sanitizeNumber(settings.maxRaiseMultiplier, 20, 2, 100),
     passwordSalt,
     passwordHash: cleanPassword ? hashPassword(cleanPassword, passwordSalt) : null,
     phase: "lobby",
-    hostId: null,
+    hostId: user.id,
     players: [],
     deck: [],
     pot: 0,
-    currentStake: ANTE,
-    minStake: ANTE,
+    currentStake: ante,
+    minStake: ante,
     dealerIndex: -1,
     turnIndex: 0,
     turnCount: 0,
@@ -98,9 +199,12 @@ function createRoom(requestedId, password = "", playerLimit = MAX_PLAYERS) {
     lastResult: null,
     log: [],
     clients: new Set(),
-    updatedAt: Date.now()
+    createdAt: now(),
+    lastActiveAt: now()
   };
   rooms.set(id, room);
+  joinRoom(room, user, settings.password, null);
+  appendLog(room, `${user.displayName} 创建房间`);
   return room;
 }
 
@@ -110,9 +214,9 @@ function getRoom(id) {
 }
 
 function appendLog(room, text) {
-  room.log.unshift({ id: newId(4), at: Date.now(), text });
+  room.log.unshift({ id: newId(4), at: now(), text });
   room.log = room.log.slice(0, 40);
-  room.updatedAt = Date.now();
+  room.lastActiveAt = now();
 }
 
 function activePlayers(room) {
@@ -134,8 +238,7 @@ function nextActiveIndex(room, fromIndex) {
 }
 
 function currentPlayer(room) {
-  if (room.phase !== "playing") return null;
-  return room.players[room.turnIndex] || null;
+  return room.phase === "playing" ? room.players[room.turnIndex] || null : null;
 }
 
 function cardLabel(card) {
@@ -145,9 +248,7 @@ function cardLabel(card) {
 function createDeck() {
   const deck = [];
   for (const suit of suits) {
-    for (const rank of ranks) {
-      deck.push({ suit, rank });
-    }
+    for (const rank of ranks) deck.push({ suit, rank });
   }
   for (let i = deck.length - 1; i > 0; i -= 1) {
     const j = crypto.randomInt(i + 1);
@@ -175,7 +276,6 @@ function evaluateHand(hand) {
   let type = 1;
   let label = "单张";
   let tiebreakers = values;
-
   if (byCount[0][1] === 3) {
     type = 6;
     label = "豹子";
@@ -199,7 +299,6 @@ function evaluateHand(hand) {
     const kicker = byCount.find((entry) => entry[1] === 1)[0];
     tiebreakers = [pair, kicker];
   }
-
   return { type, label, tiebreakers, cards: hand.map(cardLabel) };
 }
 
@@ -225,15 +324,13 @@ function pay(room, player, amount) {
 
 function startHand(room) {
   const entrants = alivePlayers(room);
-  if (entrants.length < MIN_PLAYERS) {
-    throw new Error("至少需要 2 位有筹码的玩家才能开局");
-  }
+  if (entrants.length < MIN_PLAYERS) throw new Error("至少需要 2 位有筹码的玩家才能开局");
 
   room.phase = "playing";
   room.deck = createDeck();
   room.pot = 0;
-  room.currentStake = ANTE;
-  room.minStake = ANTE;
+  room.currentStake = room.ante;
+  room.minStake = room.ante;
   room.turnCount = 0;
   room.roundNo += 1;
   room.winnerId = null;
@@ -250,15 +347,12 @@ function startHand(room) {
     if (player.inHand) {
       player.folded = false;
       player.hand = [room.deck.pop(), room.deck.pop(), room.deck.pop()];
-      const antePaid = pay(room, player, ANTE);
-      if (antePaid < ANTE && player.chips === 0) {
-        appendLog(room, `${player.name} 全下底注 ${antePaid}`);
-      }
+      pay(room, player, room.ante);
     }
   }
 
   room.turnIndex = nextActiveIndex(room, room.dealerIndex);
-  appendLog(room, `第 ${room.roundNo} 局开始，底注 ${ANTE}`);
+  appendLog(room, `第 ${room.roundNo} 局开始，底注 ${room.ante}`);
   appendLog(room, `轮到 ${room.players[room.turnIndex].name}`);
 }
 
@@ -314,41 +408,39 @@ function verifyRoomPassword(room, password) {
 }
 
 function rateLimitKey(room, req) {
+  if (!req) return `${room.id}:local`;
   const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
   const ip = forwarded || req.socket.remoteAddress || "unknown";
   return `${room.id}:${ip}`;
 }
 
 function assertCanTryJoin(room, req) {
-  const key = rateLimitKey(room, req);
-  const entry = failedJoins.get(key);
-  if (entry && Date.now() - entry.firstAt < JOIN_WINDOW_MS && entry.count >= MAX_FAILED_JOINS) {
+  const entry = failedJoins.get(rateLimitKey(room, req));
+  if (entry && now() - entry.firstAt < JOIN_WINDOW_MS && entry.count >= MAX_FAILED_JOINS) {
     throw new Error("尝试次数过多，请稍后再试");
   }
 }
 
 function recordFailedJoin(room, req) {
   const key = rateLimitKey(room, req);
-  const now = Date.now();
   const entry = failedJoins.get(key);
-  if (!entry || now - entry.firstAt >= JOIN_WINDOW_MS) {
-    failedJoins.set(key, { count: 1, firstAt: now });
-    return;
+  if (!entry || now() - entry.firstAt >= JOIN_WINDOW_MS) {
+    failedJoins.set(key, { count: 1, firstAt: now() });
+  } else {
+    entry.count += 1;
   }
-  entry.count += 1;
 }
 
 function clearFailedJoin(room, req) {
   failedJoins.delete(rateLimitKey(room, req));
 }
 
-function joinRoom(room, name, playerId, password, req) {
-  const normalizedName = sanitizeName(name);
-  let player = playerId ? room.players.find((p) => p.id === playerId) : null;
+function joinRoom(room, user, password, req) {
+  let player = room.players.find((p) => p.userId === user.id);
   if (player) {
-    player.name = normalizedName;
+    player.name = user.displayName;
     player.online = true;
-    room.updatedAt = Date.now();
+    room.lastActiveAt = now();
     return player;
   }
 
@@ -359,17 +451,14 @@ function joinRoom(room, name, playerId, password, req) {
   }
   clearFailedJoin(room, req);
 
-  if (room.players.length >= room.playerLimit) {
-    throw new Error(`房间最多 ${room.playerLimit} 人`);
-  }
-  if (room.phase === "playing") {
-    throw new Error("牌局进行中，等本局结束后再加入");
-  }
+  if (room.players.length >= room.playerLimit) throw new Error(`房间最多 ${room.playerLimit} 人`);
+  if (room.phase === "playing") throw new Error("牌局进行中，等本局结束后再加入");
 
   player = {
-    id: newId(),
-    name: normalizedName,
-    chips: STARTING_CHIPS,
+    id: user.id,
+    userId: user.id,
+    name: user.displayName,
+    chips: room.startingChips,
     ready: false,
     hand: [],
     folded: true,
@@ -377,7 +466,7 @@ function joinRoom(room, name, playerId, password, req) {
     inHand: false,
     betThisHand: 0,
     online: true,
-    joinedAt: Date.now()
+    joinedAt: now()
   };
   room.players.push(player);
   if (!room.hostId) room.hostId = player.id;
@@ -386,7 +475,7 @@ function joinRoom(room, name, playerId, password, req) {
 }
 
 function publicPlayer(player, viewerId, room) {
-  const showHand = room.phase === "roundEnd" || player.id === viewerId;
+  const showHand = room.phase === "roundEnd" || (player.id === viewerId && player.seen);
   const rank = showHand && player.hand.length ? evaluateHand(player.hand) : null;
   return {
     id: player.id,
@@ -411,7 +500,7 @@ function snapshot(room, viewerId) {
     id: room.id,
     phase: room.phase,
     pot: room.pot,
-    ante: ANTE,
+    ante: room.ante,
     minStake: room.minStake,
     currentStake: room.currentStake,
     turnPlayerId: turn ? turn.id : null,
@@ -421,25 +510,24 @@ function snapshot(room, viewerId) {
     lastResult: room.lastResult,
     maxPlayers: room.playerLimit,
     deployMaxPlayers: MAX_PLAYERS,
-    startingChips: STARTING_CHIPS,
+    startingChips: room.startingChips,
+    maxRaiseMultiplier: room.maxRaiseMultiplier,
     hasPassword: Boolean(room.passwordHash),
     players: room.players.map((p) => publicPlayer(p, viewerId, room)),
     viewerId: viewer ? viewer.id : null,
     hostId: room.hostId,
     canStart: room.phase !== "playing" && alivePlayers(room).length >= MIN_PLAYERS,
+    idleExpiresAt: room.lastActiveAt + ROOM_IDLE_MS,
     log: room.log
   };
 }
 
 function sendEvent(client, room) {
-  client.res.write(`event: state\ndata: ${JSON.stringify(snapshot(room, client.playerId))}\n\n`);
+  client.res.write(`event: state\ndata: ${JSON.stringify(snapshot(room, client.userId))}\n\n`);
 }
 
 function broadcast(room) {
-  room.updatedAt = Date.now();
-  for (const client of room.clients) {
-    sendEvent(client, room);
-  }
+  for (const client of room.clients) sendEvent(client, room);
 }
 
 async function parseJson(req) {
@@ -493,10 +581,7 @@ function serveStatic(req, res) {
       res.end("Not found");
       return;
     }
-    res.writeHead(200, {
-      "content-type": mimeType(filePath),
-      "cache-control": "no-cache"
-    });
+    res.writeHead(200, { "content-type": mimeType(filePath), "cache-control": "no-cache" });
     res.end(data);
   });
 }
@@ -527,7 +612,6 @@ function handleAction(room, playerId, action, payload) {
   }
 
   const player = requireTurn(room, playerId);
-
   if (action === "see") {
     player.seen = true;
     appendLog(room, `${player.name} 看牌`);
@@ -551,13 +635,14 @@ function handleAction(room, playerId, action, payload) {
 
   if (action === "raise") {
     const stake = Number(payload.stake);
-    if (!Number.isFinite(stake) || stake <= room.currentStake || stake % ANTE !== 0) {
-      throw new Error(`加注需高于当前注且为 ${ANTE} 的倍数`);
+    if (!Number.isFinite(stake) || stake <= room.currentStake || stake % room.ante !== 0) {
+      throw new Error(`加注需高于当前注且为 ${room.ante} 的倍数`);
     }
-    if (stake > ANTE * 20) throw new Error("单注最高为底注的 20 倍");
+    if (stake > room.ante * room.maxRaiseMultiplier) {
+      throw new Error(`单注最高为底注的 ${room.maxRaiseMultiplier} 倍`);
+    }
     room.currentStake = stake;
-    const cost = room.currentStake * (player.seen ? 2 : 1);
-    const paid = pay(room, player, cost);
+    const paid = pay(room, player, room.currentStake * (player.seen ? 2 : 1));
     appendLog(room, `${player.name} 加注到 ${stake}，支付 ${paid}`);
     advanceTurn(room);
     return;
@@ -581,57 +666,163 @@ function handleAction(room, playerId, action, payload) {
   throw new Error("未知操作");
 }
 
+function adminSummary() {
+  return {
+    users: users.map((user) => ({
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName,
+      role: user.role,
+      disabled: user.disabled,
+      createdAt: user.createdAt,
+      lastLoginAt: user.lastLoginAt
+    })),
+    rooms: [...rooms.values()].map((room) => ({
+      id: room.id,
+      phase: room.phase,
+      players: room.players.length,
+      maxPlayers: room.playerLimit,
+      hostId: room.hostId,
+      roundNo: room.roundNo,
+      hasPassword: Boolean(room.passwordHash),
+      idleExpiresAt: room.lastActiveAt + ROOM_IDLE_MS,
+      createdAt: room.createdAt
+    }))
+  };
+}
+
+function expireRoom(id, room, reason = "房间已关闭") {
+  for (const client of room.clients) {
+    client.res.write(`event: expired\ndata: ${JSON.stringify({ reason })}\n\n`);
+    client.res.end();
+  }
+  rooms.delete(id);
+}
+
 async function handleApi(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
-    if (req.method === "POST" && url.pathname === "/api/join") {
+    if (req.method === "POST" && url.pathname === "/api/auth/register") {
       const body = await parseJson(req);
-      const requestedRoom = sanitizeRoom(body.room);
-      const room = getRoom(requestedRoom) || createRoom(requestedRoom, body.password, body.playerLimit);
-      const player = joinRoom(room, body.name, body.playerId, body.password, req);
-      broadcast(room);
-      json(res, 200, { roomId: room.id, playerId: player.id, state: snapshot(room, player.id) });
+      const username = sanitizeUsername(body.username);
+      requirePassword(body.password);
+      if (!username) throw new Error("用户名只能包含字母、数字、下划线、点和短横线");
+      if (users.some((user) => user.username === username)) throw new Error("用户名已存在");
+      const role = users.length === 0 ? "admin" : "player";
+      const user = createUserRecord(username, body.password, body.displayName || username, role);
+      users.push(user);
+      saveUsers();
+      const token = createSession(user);
+      json(res, 200, { token, user: publicUser(user) });
       return;
     }
 
-    if (req.method === "GET" && url.pathname === "/api/state") {
-      const room = getRoom(url.searchParams.get("room"));
+    if (req.method === "POST" && url.pathname === "/api/auth/login") {
+      const body = await parseJson(req);
+      const username = sanitizeUsername(body.username);
+      const user = users.find((item) => item.username === username);
+      if (!user || user.disabled) throw new Error("账号不存在或已被禁用");
+      const candidate = hashPassword(sanitizePassword(body.password), user.passwordSalt);
+      if (!crypto.timingSafeEqual(Buffer.from(candidate, "hex"), Buffer.from(user.passwordHash, "hex"))) {
+        throw new Error("用户名或密码错误");
+      }
+      user.lastLoginAt = now();
+      saveUsers();
+      const token = createSession(user);
+      json(res, 200, { token, user: publicUser(user) });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/me") {
+      json(res, 200, { user: publicUser(requireUser(req, url)) });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/room/create") {
+      const user = requireUser(req);
+      const body = await parseJson(req);
+      const room = createRoom(body.room, user, body);
+      broadcast(room);
+      json(res, 200, { roomId: room.id, state: snapshot(room, user.id) });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/room/join") {
+      const user = requireUser(req);
+      const body = await parseJson(req);
+      const room = getRoom(body.room);
       if (!room) throw new Error("房间不存在");
-      json(res, 200, snapshot(room, url.searchParams.get("player")));
+      const player = joinRoom(room, user, body.password, req);
+      broadcast(room);
+      json(res, 200, { roomId: room.id, state: snapshot(room, player.id) });
       return;
     }
 
     if (req.method === "POST" && url.pathname === "/api/action") {
+      const user = requireUser(req);
       const body = await parseJson(req);
       const room = getRoom(body.room);
       if (!room) throw new Error("房间不存在");
-      handleAction(room, body.playerId, body.action, body);
+      handleAction(room, user.id, body.action, body);
       broadcast(room);
-      json(res, 200, { ok: true, state: snapshot(room, body.playerId) });
+      json(res, 200, { ok: true, state: snapshot(room, user.id) });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/state") {
+      const user = requireUser(req, url);
+      const room = getRoom(url.searchParams.get("room"));
+      if (!room) throw new Error("房间不存在");
+      json(res, 200, snapshot(room, user.id));
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/admin/summary") {
+      requireAdmin(req, url);
+      json(res, 200, adminSummary());
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/admin/room/delete") {
+      requireAdmin(req);
+      const body = await parseJson(req);
+      const room = getRoom(body.room);
+      if (room) expireRoom(room.id, room, "管理员关闭了房间");
+      json(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/admin/user/toggle") {
+      const admin = requireAdmin(req);
+      const body = await parseJson(req);
+      const user = users.find((item) => item.id === body.userId);
+      if (!user) throw new Error("用户不存在");
+      if (user.id === admin.id) throw new Error("不能禁用自己");
+      user.disabled = !user.disabled;
+      saveUsers();
+      json(res, 200, { ok: true });
       return;
     }
 
     if (req.method === "GET" && url.pathname === "/events") {
+      const user = requireUser(req, url);
       const room = getRoom(url.searchParams.get("room"));
       if (!room) {
         res.writeHead(404);
         res.end("room not found");
         return;
       }
-      const playerId = url.searchParams.get("player");
       res.writeHead(200, {
         "content-type": "text/event-stream; charset=utf-8",
         "cache-control": "no-cache, no-transform",
         connection: "keep-alive",
         "x-accel-buffering": "no"
       });
-      const client = { id: newId(4), playerId, res };
+      const client = { id: newId(4), userId: user.id, res };
       room.clients.add(client);
       sendEvent(client, room);
-      const timer = setInterval(() => {
-        res.write(": ping\n\n");
-      }, 25000);
+      const timer = setInterval(() => res.write(": ping\n\n"), 25000);
       req.on("close", () => {
         clearInterval(timer);
         room.clients.delete(client);
@@ -646,22 +837,25 @@ async function handleApi(req, res) {
 }
 
 setInterval(() => {
-  const now = Date.now();
+  const current = now();
   for (const [id, room] of rooms.entries()) {
-    if (room.clients.size === 0 && now - room.updatedAt > ROOM_TTL_MS) {
-      rooms.delete(id);
+    if (current - room.lastActiveAt > ROOM_IDLE_MS) {
+      expireRoom(id, room, "房间长时间不活动，已自动解散");
     }
   }
   for (const [key, entry] of failedJoins.entries()) {
-    if (now - entry.firstAt > JOIN_WINDOW_MS) failedJoins.delete(key);
+    if (current - entry.firstAt > JOIN_WINDOW_MS) failedJoins.delete(key);
   }
-}, 1000 * 60 * 15).unref();
+  for (const [token, session] of sessions.entries()) {
+    if (session.expiresAt < current) sessions.delete(token);
+  }
+}, 1000 * 60).unref();
 
 function createGameServer() {
-  return http.createServer((req, res) => {
-    handleApi(req, res);
-  });
+  return http.createServer((req, res) => handleApi(req, res));
 }
+
+loadUsers();
 
 if (require.main === module) {
   const server = createGameServer();

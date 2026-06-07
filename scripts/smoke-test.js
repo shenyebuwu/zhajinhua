@@ -1,6 +1,13 @@
 "use strict";
 
 const assert = require("assert");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
+process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "zjh-test-"));
+process.env.ROOM_IDLE_MINUTES = "30";
+
 const { createGameServer, compareHands, evaluateHand } = require("../server");
 
 const server = createGameServer();
@@ -9,35 +16,33 @@ function card(suit, rank) {
   return { suit, rank };
 }
 
-async function post(base, path, body) {
-  const response = await fetch(`${base}${path}`, {
+async function post(base, pathName, body, token = "") {
+  const response = await fetch(`${base}${pathName}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify(body)
   });
   const json = await response.json();
-  if (!response.ok || json.error) {
-    throw new Error(json.error || `HTTP ${response.status}`);
-  }
+  if (!response.ok || json.error) throw new Error(json.error || `HTTP ${response.status}`);
+  return json;
+}
+
+async function get(base, pathName, token = "") {
+  const response = await fetch(`${base}${pathName}`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {}
+  });
+  const json = await response.json();
+  if (!response.ok || json.error) throw new Error(json.error || `HTTP ${response.status}`);
   return json;
 }
 
 async function main() {
+  assert.strictEqual(evaluateHand([card("S", 14), card("H", 14), card("D", 14)]).label, "豹子");
   assert.strictEqual(
-    evaluateHand([card("S", 14), card("H", 14), card("D", 14)]).label,
-    "豹子"
-  );
-  assert.strictEqual(
-    compareHands(
-      [card("S", 14), card("H", 14), card("D", 14)],
-      [card("S", 12), card("S", 13), card("S", 14)]
-    ),
+    compareHands([card("S", 14), card("H", 14), card("D", 14)], [card("S", 12), card("S", 13), card("S", 14)]),
     1
   );
-  assert.strictEqual(
-    evaluateHand([card("S", 14), card("H", 2), card("D", 3)]).label,
-    "顺子"
-  );
+  assert.strictEqual(evaluateHand([card("S", 14), card("H", 2), card("D", 3)]).label, "顺子");
 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address();
@@ -45,39 +50,60 @@ async function main() {
 
   const home = await fetch(`${base}/`);
   assert.strictEqual(home.status, 200);
-  assert.ok((home.headers.get("content-type") || "").includes("text/html"));
   assert.ok((await home.text()).includes("炸金花"));
 
-  const css = await fetch(`${base}/styles.css`);
-  assert.strictEqual(css.status, 200);
-  assert.ok((css.headers.get("content-type") || "").includes("text/css"));
+  const alice = await post(base, "/api/auth/register", {
+    username: "alice",
+    password: "pass1234",
+    displayName: "阿明"
+  });
+  assert.strictEqual(alice.user.role, "admin");
 
-  const alice = await post(base, "/api/join", { name: "阿明", room: "TEST", password: "secret", playerLimit: 3 });
+  const bob = await post(base, "/api/auth/register", {
+    username: "bob",
+    password: "pass1234",
+    displayName: "小李"
+  });
+
+  const created = await post(base, "/api/room/create", {
+    room: "TEST",
+    password: "secret",
+    playerLimit: 3,
+    ante: 20,
+    startingChips: 800,
+    maxRaiseMultiplier: 10
+  }, alice.token);
+  assert.strictEqual(created.roomId, "TEST");
+  assert.strictEqual(created.state.maxPlayers, 3);
+  assert.strictEqual(created.state.ante, 20);
+
   await assert.rejects(
-    () => post(base, "/api/join", { name: "路人", room: "TEST", password: "wrong" }),
+    () => post(base, "/api/room/join", { room: "TEST", password: "wrong" }, bob.token),
     /房间密码不正确/
   );
-  const bob = await post(base, "/api/join", { name: "小李", room: "TEST", password: "secret" });
-  assert.strictEqual(alice.roomId, "TEST");
-  assert.strictEqual(alice.state.maxPlayers, 3);
-  assert.strictEqual(bob.state.players.length, 2);
 
-  const started = await post(base, "/api/action", {
-    room: "TEST",
-    playerId: alice.playerId,
-    action: "start"
-  });
+  const joined = await post(base, "/api/room/join", { room: "TEST", password: "secret" }, bob.token);
+  assert.strictEqual(joined.state.players.length, 2);
+
+  const rejoin = await post(base, "/api/room/join", { room: "TEST", password: "secret" }, bob.token);
+  assert.strictEqual(rejoin.state.players.length, 2);
+
+  const started = await post(base, "/api/action", { room: "TEST", action: "start" }, alice.token);
   assert.strictEqual(started.state.phase, "playing");
-  assert.strictEqual(started.state.players.filter((p) => p.inHand).length, 2);
+  const aliceView = started.state.players.find((player) => player.id === started.state.viewerId);
+  assert.deepStrictEqual(aliceView.hand, ["背面", "背面", "背面"]);
+  assert.strictEqual(aliceView.rank, null);
 
-  const turnPlayerId = started.state.turnPlayerId;
-  const afterCall = await post(base, "/api/action", {
-    room: "TEST",
-    playerId: turnPlayerId,
-    action: "call"
-  });
-  assert.strictEqual(afterCall.state.phase, "playing");
-  assert.ok(afterCall.state.pot >= 30);
+  const stateForAlice = await get(base, "/api/state?room=TEST", alice.token);
+  const turnToken = stateForAlice.turnPlayerId === alice.user.id ? alice.token : bob.token;
+  const seen = await post(base, "/api/action", { room: "TEST", action: "see" }, turnToken);
+  const seenPlayer = seen.state.players.find((player) => player.id === seen.state.viewerId);
+  assert.notDeepStrictEqual(seenPlayer.hand, ["背面", "背面", "背面"]);
+  assert.ok(seenPlayer.rank);
+
+  const admin = await get(base, "/api/admin/summary", alice.token);
+  assert.strictEqual(admin.rooms.length, 1);
+  assert.strictEqual(admin.users.length, 2);
 
   console.log("smoke test passed");
 }
