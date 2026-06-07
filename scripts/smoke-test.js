@@ -42,6 +42,11 @@ async function main() {
     compareHands([card("S", 14), card("H", 14), card("D", 14)], [card("S", 12), card("S", 13), card("S", 14)]),
     1
   );
+  assert.strictEqual(
+    compareHands([card("S", 2), card("H", 3), card("D", 5)], [card("S", 14), card("H", 14), card("D", 14)]),
+    1
+  );
+  assert.strictEqual(evaluateHand([card("S", 12), card("S", 13), card("S", 14)]).label, "顺金");
   assert.strictEqual(evaluateHand([card("S", 14), card("H", 2), card("D", 3)]).label, "顺子");
 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -101,8 +106,41 @@ async function main() {
   assert.notDeepStrictEqual(seenPlayer.hand, ["背面", "背面", "背面"]);
   assert.ok(seenPlayer.rank);
 
+  await post(base, "/api/room/create", {
+    room: "FOLD",
+    password: "",
+    playerLimit: 2,
+    ante: 10,
+    startingChips: 500
+  }, alice.token);
+  await post(base, "/api/room/join", { room: "FOLD", password: "" }, bob.token);
+  const foldStarted = await post(base, "/api/action", { room: "FOLD", action: "start" }, alice.token);
+  const foldToken = foldStarted.state.turnPlayerId === alice.user.id ? alice.token : bob.token;
+  const folded = await post(base, "/api/action", { room: "FOLD", action: "fold" }, foldToken);
+  assert.strictEqual(folded.state.phase, "roundEnd");
+  const foldedPlayer = folded.state.players.find((player) => player.folded);
+  assert.deepStrictEqual(foldedPlayer.hand, ["背面", "背面", "背面"]);
+  assert.strictEqual(foldedPlayer.rank, null);
+
+  await post(base, "/api/room/create", {
+    room: "CMP",
+    playerLimit: 2,
+    ante: 10,
+    startingChips: 500
+  }, alice.token);
+  await post(base, "/api/room/join", { room: "CMP" }, bob.token);
+  const cmpStarted = await post(base, "/api/action", { room: "CMP", action: "start" }, alice.token);
+  const cmpToken = cmpStarted.state.turnPlayerId === alice.user.id ? alice.token : bob.token;
+  const cmpActorId = cmpStarted.state.turnPlayerId;
+  const cmpTarget = cmpStarted.state.players.find((player) => player.id !== cmpActorId);
+  await post(base, "/api/action", { room: "CMP", action: "see" }, cmpToken);
+  const compared = await post(base, "/api/action", { room: "CMP", action: "compare", targetId: cmpTarget.id }, cmpToken);
+  const revealedPlayers = compared.state.players.filter((player) => player.revealed);
+  assert.strictEqual(revealedPlayers.length, 2);
+  assert.ok(revealedPlayers.every((player) => player.hand.every((item) => item !== "背面")));
+
   const admin = await get(base, "/api/admin/summary", alice.token);
-  assert.strictEqual(admin.rooms.length, 1);
+  assert.strictEqual(admin.rooms.length, 3);
   assert.strictEqual(admin.users.length, 2);
 
   console.log("smoke test passed");

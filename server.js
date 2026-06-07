@@ -264,6 +264,7 @@ function evaluateHand(hand) {
   for (const value of values) counts.set(value, (counts.get(value) || 0) + 1);
 
   const unique = [...new Set(values)].sort((a, b) => b - a);
+  const is235 = unique.join(",") === "5,3,2";
   const isFlush = hand.every((card) => card.suit === hand[0].suit);
   let isStraight = unique.length === 3 && unique[0] - unique[2] === 2;
   let straightHigh = unique[0];
@@ -282,7 +283,7 @@ function evaluateHand(hand) {
     tiebreakers = [byCount[0][0]];
   } else if (isStraight && isFlush) {
     type = 5;
-    label = "同花顺";
+    label = "顺金";
     tiebreakers = [straightHigh];
   } else if (isFlush) {
     type = 4;
@@ -299,12 +300,14 @@ function evaluateHand(hand) {
     const kicker = byCount.find((entry) => entry[1] === 1)[0];
     tiebreakers = [pair, kicker];
   }
-  return { type, label, tiebreakers, cards: hand.map(cardLabel) };
+  return { type, label, tiebreakers, cards: hand.map(cardLabel), is235 };
 }
 
 function compareHands(a, b) {
   const left = evaluateHand(a);
   const right = evaluateHand(b);
+  if (left.is235 && right.type === 6) return 1;
+  if (right.is235 && left.type === 6) return -1;
   if (left.type !== right.type) return left.type > right.type ? 1 : -1;
   const length = Math.max(left.tiebreakers.length, right.tiebreakers.length);
   for (let i = 0; i < length; i += 1) {
@@ -322,6 +325,31 @@ function pay(room, player, amount) {
   return realAmount;
 }
 
+function transferChips(room, from, to, amount) {
+  const realAmount = Math.max(0, Math.min(from.chips, amount));
+  from.chips -= realAmount;
+  to.chips += realAmount;
+  room.lastActiveAt = now();
+  return realAmount;
+}
+
+function settleHappyBonuses(room) {
+  const bonuses = [];
+  for (const player of room.players.filter((p) => p.inHand)) {
+    const rank = evaluateHand(player.hand);
+    const multiplier = rank.type === 6 ? 20 : rank.type === 5 ? 10 : 0;
+    if (!multiplier) continue;
+    const bonus = room.ante * multiplier;
+    let total = 0;
+    for (const payer of room.players.filter((p) => p.inHand && p.id !== player.id)) {
+      total += transferChips(room, payer, player, bonus);
+    }
+    bonuses.push({ playerId: player.id, name: player.name, label: rank.label, bonus, total });
+    appendLog(room, `${player.name} ${rank.label}有喜，每人给 ${bonus}，共得 ${total}`);
+  }
+  room.happyBonuses = bonuses;
+}
+
 function startHand(room) {
   const entrants = alivePlayers(room);
   if (entrants.length < MIN_PLAYERS) throw new Error("至少需要 2 位有筹码的玩家才能开局");
@@ -335,6 +363,7 @@ function startHand(room) {
   room.roundNo += 1;
   room.winnerId = null;
   room.lastResult = null;
+  room.happyBonuses = [];
   room.dealerIndex = (room.dealerIndex + 1) % room.players.length;
 
   for (const player of room.players) {
@@ -342,6 +371,8 @@ function startHand(room) {
     player.hand = [];
     player.folded = true;
     player.seen = false;
+    player.revealed = false;
+    player.revealedBy = null;
     player.inHand = player.chips > 0;
     player.betThisHand = 0;
     if (player.inHand) {
@@ -351,6 +382,7 @@ function startHand(room) {
     }
   }
 
+  settleHappyBonuses(room);
   room.turnIndex = nextActiveIndex(room, room.dealerIndex);
   appendLog(room, `第 ${room.roundNo} 局开始，底注 ${room.ante}`);
   appendLog(room, `轮到 ${room.players[room.turnIndex].name}`);
@@ -373,8 +405,9 @@ function settleIfNeeded(room, reason = "") {
         id: p.id,
         name: p.name,
         folded: p.folded,
-        hand: p.hand.map(cardLabel),
-        rank: evaluateHand(p.hand)
+        revealed: p.revealed,
+        hand: p.revealed ? p.hand.map(cardLabel) : p.hand.map(() => "背面"),
+        rank: p.revealed ? evaluateHand(p.hand) : null
       }))
     };
     appendLog(room, `${winner.name} 赢得 ${room.pot} 筹码`);
@@ -463,6 +496,8 @@ function joinRoom(room, user, password, req) {
     hand: [],
     folded: true,
     seen: false,
+    revealed: false,
+    revealedBy: null,
     inHand: false,
     betThisHand: 0,
     online: true,
@@ -475,7 +510,7 @@ function joinRoom(room, user, password, req) {
 }
 
 function publicPlayer(player, viewerId, room) {
-  const showHand = room.phase === "roundEnd" || (player.id === viewerId && player.seen);
+  const showHand = player.revealed || (player.id === viewerId && player.seen);
   const rank = showHand && player.hand.length ? evaluateHand(player.hand) : null;
   return {
     id: player.id,
@@ -488,6 +523,7 @@ function publicPlayer(player, viewerId, room) {
     betThisHand: player.betThisHand,
     online: player.online,
     isHost: player.id === room.hostId,
+    revealed: player.revealed,
     hand: showHand ? player.hand.map(cardLabel) : player.hand.map(() => "背面"),
     rank
   };
@@ -512,6 +548,7 @@ function snapshot(room, viewerId) {
     deployMaxPlayers: MAX_PLAYERS,
     startingChips: room.startingChips,
     maxRaiseMultiplier: room.maxRaiseMultiplier,
+    happyBonuses: room.happyBonuses || [],
     hasPassword: Boolean(room.passwordHash),
     players: room.players.map((p) => publicPlayer(p, viewerId, room)),
     viewerId: viewer ? viewer.id : null,
@@ -657,6 +694,10 @@ function handleAction(room, playerId, action, payload) {
     const paid = pay(room, player, room.currentStake * 2);
     const result = compareHands(player.hand, target.hand);
     const loser = result >= 0 ? target : player;
+    player.revealed = true;
+    player.revealedBy = "compare";
+    target.revealed = true;
+    target.revealedBy = "compare";
     loser.folded = true;
     appendLog(room, `${player.name} 支付 ${paid} 与 ${target.name} 比牌，${loser.name} 出局`);
     if (!settleIfNeeded(room, "比牌结束")) advanceTurn(room);
