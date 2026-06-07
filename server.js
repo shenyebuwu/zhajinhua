@@ -15,13 +15,16 @@ const MAX_PLAYERS = Number(process.env.MAX_PLAYERS || 17);
 const MIN_PLAYERS = 2;
 const ROOM_IDLE_MS = Number(process.env.ROOM_IDLE_MINUTES || 30) * 60 * 1000;
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_HOURS || 168) * 60 * 60 * 1000;
+const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_SECONDS || 60) * 1000;
 const JOIN_WINDOW_MS = 1000 * 60 * 10;
 const MAX_FAILED_JOINS = Number(process.env.MAX_FAILED_JOINS || 20);
 
 const rooms = new Map();
 const failedJoins = new Map();
 const sessions = new Map();
+const userTokens = new Map();
 let users = [];
+let adminLogs = [];
 
 const suits = ["S", "H", "D", "C"];
 const ranks = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
@@ -121,6 +124,18 @@ function publicUser(user) {
   };
 }
 
+function addAdminLog(actor, action, detail = "") {
+  adminLogs.unshift({
+    id: newId(4),
+    at: now(),
+    actorId: actor ? actor.id : null,
+    actorName: actor ? actor.username : "system",
+    action,
+    detail
+  });
+  adminLogs = adminLogs.slice(0, 200);
+}
+
 function requirePassword(password) {
   if (sanitizePassword(password).length < 4) throw new Error("密码至少 4 位");
 }
@@ -148,9 +163,23 @@ function syncUserDisplayName(user) {
 }
 
 function createSession(user) {
+  const oldToken = userTokens.get(user.id);
+  if (oldToken) {
+    sessions.delete(oldToken);
+    notifyUserSessions(user.id, "session-replaced", { reason: "账号已在其他设备登录" });
+  }
   const token = newId(24);
   sessions.set(token, { userId: user.id, expiresAt: now() + SESSION_TTL_MS });
+  userTokens.set(user.id, token);
   return token;
+}
+
+function notifyUserSessions(userId, event, data) {
+  for (const room of rooms.values()) {
+    for (const client of room.clients) {
+      if (client.userId === userId) sendClientEvent(client, event, data);
+    }
+  }
 }
 
 function getToken(req, url = null) {
@@ -222,7 +251,8 @@ function createRoom(requestedId, user, settings = {}) {
     log: [],
     clients: new Set(),
     createdAt: now(),
-    lastActiveAt: now()
+    lastActiveAt: now(),
+    turnDeadlineAt: null
   };
   rooms.set(id, room);
   joinRoom(room, user, settings.password, null);
@@ -239,6 +269,10 @@ function appendLog(room, text) {
   room.log.unshift({ id: newId(4), at: now(), text });
   room.log = room.log.slice(0, 40);
   room.lastActiveAt = now();
+}
+
+function setTurnDeadline(room) {
+  room.turnDeadlineAt = room.phase === "playing" ? now() + TURN_TIMEOUT_MS : null;
 }
 
 function activePlayers(room) {
@@ -406,6 +440,7 @@ function startHand(room) {
 
   settleHappyBonuses(room);
   room.turnIndex = nextActiveIndex(room, room.dealerIndex);
+  setTurnDeadline(room);
   appendLog(room, `第 ${room.roundNo} 局开始，底注 ${room.ante}`);
   appendLog(room, `轮到 ${room.players[room.turnIndex].name}`);
 }
@@ -423,6 +458,14 @@ function settleIfNeeded(room, reason = "") {
       winnerId: winner.id,
       winnerName: winner.name,
       pot: room.pot,
+      happyBonuses: room.happyBonuses || [],
+      chipSummary: room.players.map((p) => ({
+        id: p.id,
+        name: p.name,
+        chips: p.chips + (p.id === winner.id ? room.pot : 0),
+        betThisHand: p.betThisHand,
+        folded: p.folded
+      })),
       hands: room.players.filter((p) => p.inHand).map((p) => ({
         id: p.id,
         name: p.name,
@@ -432,6 +475,7 @@ function settleIfNeeded(room, reason = "") {
         rank: p.revealed ? evaluateHand(p.hand) : null
       }))
     };
+    room.turnDeadlineAt = null;
     appendLog(room, `${winner.name} 赢得 ${room.pot} 筹码`);
     room.pot = 0;
     return true;
@@ -443,6 +487,7 @@ function advanceTurn(room) {
   if (settleIfNeeded(room)) return;
   room.turnCount += 1;
   room.turnIndex = nextActiveIndex(room, room.turnIndex);
+  setTurnDeadline(room);
   const player = currentPlayer(room);
   if (player) appendLog(room, `轮到 ${player.name}`);
 }
@@ -495,6 +540,7 @@ function joinRoom(room, user, password, req) {
   if (player) {
     player.name = user.displayName;
     player.online = true;
+    player.lastSeenAt = now();
     room.lastActiveAt = now();
     return player;
   }
@@ -523,6 +569,7 @@ function joinRoom(room, user, password, req) {
     inHand: false,
     betThisHand: 0,
     online: true,
+    lastSeenAt: now(),
     joinedAt: now()
   };
   room.players.push(player);
@@ -544,6 +591,7 @@ function publicPlayer(player, viewerId, room) {
     inHand: player.inHand,
     betThisHand: player.betThisHand,
     online: player.online,
+    lastSeenAt: player.lastSeenAt,
     isHost: player.id === room.hostId,
     revealed: player.revealed,
     hand: showHand ? player.hand.map(cardLabel) : player.hand.map(() => "背面"),
@@ -562,6 +610,8 @@ function snapshot(room, viewerId) {
     minStake: room.minStake,
     currentStake: room.currentStake,
     turnPlayerId: turn ? turn.id : null,
+    turnDeadlineAt: room.turnDeadlineAt,
+    turnTimeoutSeconds: Math.floor(TURN_TIMEOUT_MS / 1000),
     turnCount: room.turnCount,
     roundNo: room.roundNo,
     winnerId: room.winnerId,
@@ -591,6 +641,13 @@ function sendClientEvent(client, event, data) {
 
 function broadcast(room) {
   for (const client of room.clients) sendEvent(client, room);
+}
+
+function markUserPresence(room, userId, online) {
+  const player = room.players.find((p) => p.id === userId);
+  if (!player) return;
+  player.online = online;
+  player.lastSeenAt = now();
 }
 
 function relayVoiceSignal(room, fromUserId, toUserId, signal) {
@@ -660,6 +717,28 @@ function serveStatic(req, res) {
 function handleAction(room, playerId, action, payload) {
   const actor = room.players.find((p) => p.id === playerId);
   if (!actor) throw new Error("玩家不存在");
+
+  if (action === "kick") {
+    if (playerId !== room.hostId) throw new Error("只有房主可以踢人");
+    if (room.phase === "playing") throw new Error("牌局中不能踢人");
+    const targetId = String(payload.targetId || "");
+    if (!targetId || targetId === playerId) throw new Error("不能踢自己");
+    const targetIndex = room.players.findIndex((p) => p.id === targetId);
+    if (targetIndex < 0) throw new Error("玩家不存在");
+    const [target] = room.players.splice(targetIndex, 1);
+    appendLog(room, `${actor.name} 将 ${target.name} 移出房间`);
+    notifyUserSessions(target.id, "kicked", { room: room.id, reason: "房主将你移出房间" });
+    return;
+  }
+
+  if (action === "transferHost") {
+    if (playerId !== room.hostId) throw new Error("只有房主可以转让房主");
+    const target = room.players.find((p) => p.id === payload.targetId);
+    if (!target || target.id === playerId) throw new Error("请选择其他玩家");
+    room.hostId = target.id;
+    appendLog(room, `${actor.name} 将房主转让给 ${target.name}`);
+    return;
+  }
 
   if (action === "ready") {
     if (room.phase === "playing") throw new Error("牌局进行中不能准备");
@@ -741,6 +820,17 @@ function handleAction(room, playerId, action, payload) {
   throw new Error("未知操作");
 }
 
+function timeoutTurn(room) {
+  if (room.phase !== "playing" || !room.turnDeadlineAt || now() < room.turnDeadlineAt) return false;
+  const player = currentPlayer(room);
+  if (!player) return false;
+  player.folded = true;
+  appendLog(room, `${player.name} 超时自动弃牌`);
+  advanceTurn(room);
+  broadcast(room);
+  return true;
+}
+
 function adminSummary() {
   return {
     users: users.map((user) => ({
@@ -762,7 +852,8 @@ function adminSummary() {
       hasPassword: Boolean(room.passwordHash),
       idleExpiresAt: room.lastActiveAt + ROOM_IDLE_MS,
       createdAt: room.createdAt
-    }))
+    })),
+    logs: adminLogs
   };
 }
 
@@ -788,6 +879,7 @@ async function handleApi(req, res) {
       const user = createUserRecord(username, body.password, body.displayName || username, role);
       users.push(user);
       saveUsers();
+      addAdminLog(user, "register", `${user.username} 注册为 ${role}`);
       const token = createSession(user);
       json(res, 200, { token, user: publicUser(user) });
       return;
@@ -801,6 +893,7 @@ async function handleApi(req, res) {
       if (!verifyUserPassword(user, body.password)) throw new Error("用户名或密码错误");
       user.lastLoginAt = now();
       saveUsers();
+      addAdminLog(user, "login", `${user.username} 登录`);
       const token = createSession(user);
       json(res, 200, { token, user: publicUser(user) });
       return;
@@ -890,10 +983,13 @@ async function handleApi(req, res) {
     }
 
     if (req.method === "POST" && url.pathname === "/api/admin/room/delete") {
-      requireAdmin(req);
+      const admin = requireAdmin(req);
       const body = await parseJson(req);
       const room = getRoom(body.room);
-      if (room) expireRoom(room.id, room, "管理员关闭了房间");
+      if (room) {
+        expireRoom(room.id, room, "管理员关闭了房间");
+        addAdminLog(admin, "delete-room", `关闭房间 ${room.id}`);
+      }
       json(res, 200, { ok: true });
       return;
     }
@@ -906,6 +1002,7 @@ async function handleApi(req, res) {
       if (user.id === admin.id) throw new Error("不能禁用自己");
       user.disabled = !user.disabled;
       saveUsers();
+      addAdminLog(admin, user.disabled ? "disable-user" : "enable-user", `${user.username}`);
       json(res, 200, { ok: true });
       return;
     }
@@ -926,11 +1023,17 @@ async function handleApi(req, res) {
       });
       const client = { id: newId(4), userId: user.id, res };
       room.clients.add(client);
+      markUserPresence(room, user.id, true);
+      broadcast(room);
       sendEvent(client, room);
       const timer = setInterval(() => res.write(": ping\n\n"), 25000);
       req.on("close", () => {
         clearInterval(timer);
         room.clients.delete(client);
+        if (![...room.clients].some((item) => item.userId === user.id)) {
+          markUserPresence(room, user.id, false);
+          broadcast(room);
+        }
       });
       return;
     }
@@ -944,6 +1047,7 @@ async function handleApi(req, res) {
 setInterval(() => {
   const current = now();
   for (const [id, room] of rooms.entries()) {
+    timeoutTurn(room);
     if (current - room.lastActiveAt > ROOM_IDLE_MS) {
       expireRoom(id, room, "房间长时间不活动，已自动解散");
     }

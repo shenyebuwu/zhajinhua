@@ -140,6 +140,7 @@
             <p class="eyebrow room-line">
               房间 <button id="copyRoomBtn" class="text-button" type="button"></button>
               <button id="voiceBtn" class="text-button" type="button">开麦</button>
+              <button id="qrBtn" class="text-button" type="button">二维码</button>
             </p>
             <h2 id="statusTitle">等待加入</h2>
           </div>
@@ -168,6 +169,11 @@
         </section>
 
         <section class="controls" id="controls"></section>
+        <section class="voice-panel hidden" id="voicePanel"></section>
+        <section class="qr-panel hidden" id="qrPanel">
+          <button id="closeQrBtn" class="back-button" type="button">关闭二维码</button>
+          <img id="qrImage" alt="房间邀请二维码">
+        </section>
 
         <details class="mobile-details">
           <summary>规则与记录</summary>
@@ -200,6 +206,10 @@
           <div class="tool-panel">
             <h3>用户</h3>
             <div id="adminUsers" class="admin-list"></div>
+          </div>
+          <div class="tool-panel">
+            <h3>管理日志</h3>
+            <div id="adminLogs" class="admin-list"></div>
           </div>
         </section>
       </section>

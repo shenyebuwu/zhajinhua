@@ -69,6 +69,7 @@ async function main() {
     password: "pass1234",
     displayName: "小李"
   });
+  let bobToken = bob.token;
 
   const created = await post(base, "/api/room/create", {
     room: "TEST",
@@ -95,28 +96,41 @@ async function main() {
     signal: { type: "candidate", candidate: { candidate: "test", sdpMid: "0", sdpMLineIndex: 0 } }
   }, alice.token);
 
-  const rejoin = await post(base, "/api/room/join", { room: "TEST", password: "secret" }, bob.token);
+  const rejoin = await post(base, "/api/room/join", { room: "TEST", password: "secret" }, bobToken);
   assert.strictEqual(rejoin.state.players.length, 2);
+  assert.ok(Number.isFinite(rejoin.state.turnTimeoutSeconds));
+
+  const carol = await post(base, "/api/auth/register", {
+    username: "carol",
+    password: "pass1234",
+    displayName: "小王"
+  });
+  await post(base, "/api/room/join", { room: "TEST", password: "secret" }, carol.token);
+  const transferred = await post(base, "/api/action", { room: "TEST", action: "transferHost", targetId: bob.user.id }, alice.token);
+  assert.strictEqual(transferred.state.hostId, bob.user.id);
+  const kicked = await post(base, "/api/action", { room: "TEST", action: "kick", targetId: carol.user.id }, bobToken);
+  assert.strictEqual(kicked.state.players.some((player) => player.id === carol.user.id), false);
 
   const updatedBob = await post(base, "/api/profile", {
     displayName: "小李二",
     currentPassword: "pass1234",
     newPassword: "newpass123"
-  }, bob.token);
+  }, bobToken);
   assert.strictEqual(updatedBob.user.displayName, "小李二");
   const bobLogin = await post(base, "/api/auth/login", { username: "bob", password: "newpass123" });
+  bobToken = bobLogin.token;
   assert.strictEqual(bobLogin.user.displayName, "小李二");
-  const renamedRoom = await get(base, "/api/state?room=TEST", bob.token);
+  const renamedRoom = await get(base, "/api/state?room=TEST", bobToken);
   assert.strictEqual(renamedRoom.players.find((player) => player.id === bob.user.id).name, "小李二");
 
-  const started = await post(base, "/api/action", { room: "TEST", action: "start" }, alice.token);
+  const started = await post(base, "/api/action", { room: "TEST", action: "start" }, bobToken);
   assert.strictEqual(started.state.phase, "playing");
   const aliceView = started.state.players.find((player) => player.id === started.state.viewerId);
   assert.deepStrictEqual(aliceView.hand, ["背面", "背面", "背面"]);
   assert.strictEqual(aliceView.rank, null);
 
   const stateForAlice = await get(base, "/api/state?room=TEST", alice.token);
-  const turnToken = stateForAlice.turnPlayerId === alice.user.id ? alice.token : bob.token;
+  const turnToken = stateForAlice.turnPlayerId === alice.user.id ? alice.token : bobToken;
   const seen = await post(base, "/api/action", { room: "TEST", action: "see" }, turnToken);
   const seenPlayer = seen.state.players.find((player) => player.id === seen.state.viewerId);
   assert.notDeepStrictEqual(seenPlayer.hand, ["背面", "背面", "背面"]);
@@ -129,9 +143,9 @@ async function main() {
     ante: 10,
     startingChips: 500
   }, alice.token);
-  await post(base, "/api/room/join", { room: "FOLD", password: "" }, bob.token);
+  await post(base, "/api/room/join", { room: "FOLD", password: "" }, bobToken);
   const foldStarted = await post(base, "/api/action", { room: "FOLD", action: "start" }, alice.token);
-  const foldToken = foldStarted.state.turnPlayerId === alice.user.id ? alice.token : bob.token;
+  const foldToken = foldStarted.state.turnPlayerId === alice.user.id ? alice.token : bobToken;
   const folded = await post(base, "/api/action", { room: "FOLD", action: "fold" }, foldToken);
   assert.strictEqual(folded.state.phase, "roundEnd");
   const foldedPlayer = folded.state.players.find((player) => player.folded);
@@ -144,9 +158,9 @@ async function main() {
     ante: 10,
     startingChips: 500
   }, alice.token);
-  await post(base, "/api/room/join", { room: "CMP" }, bob.token);
+  await post(base, "/api/room/join", { room: "CMP" }, bobToken);
   const cmpStarted = await post(base, "/api/action", { room: "CMP", action: "start" }, alice.token);
-  const cmpToken = cmpStarted.state.turnPlayerId === alice.user.id ? alice.token : bob.token;
+  const cmpToken = cmpStarted.state.turnPlayerId === alice.user.id ? alice.token : bobToken;
   const cmpActorId = cmpStarted.state.turnPlayerId;
   const cmpTarget = cmpStarted.state.players.find((player) => player.id !== cmpActorId);
   await post(base, "/api/action", { room: "CMP", action: "see" }, cmpToken);
@@ -157,7 +171,8 @@ async function main() {
 
   const admin = await get(base, "/api/admin/summary", alice.token);
   assert.strictEqual(admin.rooms.length, 3);
-  assert.strictEqual(admin.users.length, 2);
+  assert.ok(admin.logs.length >= 3);
+  assert.strictEqual(admin.users.length, 3);
 
   console.log("smoke test passed");
 }

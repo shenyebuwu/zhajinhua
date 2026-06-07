@@ -200,6 +200,21 @@ select:focus {
   display: none;
 }
 
+@media (orientation: portrait) and (max-width: 720px) {
+  .game-view::before {
+    content: "横屏体验更好";
+    display: block;
+    padding: 6px 10px;
+    border: 1px solid rgba(229, 189, 91, 0.35);
+    border-radius: 8px;
+    background: rgba(229, 189, 91, 0.12);
+    color: var(--gold);
+    font-size: 12px;
+    font-weight: 800;
+    text-align: center;
+  }
+}
+
 .game-view {
   width: min(1120px, 100%);
   margin: 0 auto;
@@ -303,6 +318,59 @@ select:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.host-controls {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+}
+
+.result-panel,
+.voice-panel,
+.qr-panel {
+  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(23, 27, 21, 0.86);
+}
+
+.settle-list {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.voice-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 96px;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.voice-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qr-panel {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.qr-panel img {
+  width: 220px;
+  max-width: 100%;
+  border-radius: 8px;
+  background: white;
+  padding: 8px;
 }
 
 .topbar,
@@ -803,8 +871,17 @@ select:focus {
   }
 
   .compare-select,
-  .raise-input {
+  .raise-input,
+  .host-controls {
     grid-template-columns: minmax(0, 1fr) 88px;
+  }
+
+  .host-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .voice-row {
+    grid-template-columns: 1fr;
   }
 
   .hand-panel {

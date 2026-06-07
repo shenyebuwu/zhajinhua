@@ -35,6 +35,11 @@ const joinRoomInput = document.querySelector("#joinRoomInput");
 const joinPasswordInput = document.querySelector("#joinPasswordInput");
 const copyRoomBtn = document.querySelector("#copyRoomBtn");
 const voiceBtn = document.querySelector("#voiceBtn");
+const qrBtn = document.querySelector("#qrBtn");
+const qrPanel = document.querySelector("#qrPanel");
+const qrImage = document.querySelector("#qrImage");
+const closeQrBtn = document.querySelector("#closeQrBtn");
+const voicePanel = document.querySelector("#voicePanel");
 const remoteAudioRoot = document.querySelector("#remoteAudioRoot");
 const statusTitle = document.querySelector("#statusTitle");
 const potValue = document.querySelector("#potValue");
@@ -50,6 +55,7 @@ const playerTemplate = document.querySelector("#playerTemplate");
 const backLobbyBtn = document.querySelector("#backLobbyBtn");
 const adminRooms = document.querySelector("#adminRooms");
 const adminUsers = document.querySelector("#adminUsers");
+const adminLogs = document.querySelector("#adminLogs");
 
 const inviteRoom = new URL(location.href).searchParams.get("room") || "";
 let authMode = "login";
@@ -61,7 +67,10 @@ let voiceEnabled = false;
 let localStream = null;
 const voicePeers = new Map();
 const remoteAudios = new Map();
+const voiceMuted = new Set();
+const voiceVolumes = new Map();
 const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+let timerInterval = null;
 
 joinRoomInput.value = inviteRoom;
 
@@ -78,6 +87,8 @@ adminBtn.addEventListener("click", showAdmin);
 backLobbyBtn.addEventListener("click", showLobby);
 copyRoomBtn.addEventListener("click", copyInvite);
 voiceBtn.addEventListener("click", toggleVoice);
+qrBtn.addEventListener("click", showQr);
+closeQrBtn.addEventListener("click", () => qrPanel.classList.add("hidden"));
 
 boot();
 
@@ -190,6 +201,16 @@ function openEvents() {
     toast(data.reason || "房间已关闭");
     leaveRoom();
   });
+  events.addEventListener("kicked", (event) => {
+    const data = JSON.parse(event.data || "{}");
+    toast(data.reason || "你已被移出房间");
+    leaveRoom();
+  });
+  events.addEventListener("session-replaced", (event) => {
+    const data = JSON.parse(event.data || "{}");
+    toast(data.reason || "账号已在其他设备登录");
+    logout();
+  });
   events.onerror = () => {
     turnValue.textContent = "重连中";
   };
@@ -229,7 +250,10 @@ function render() {
   renderHand();
   renderControls();
   renderLog();
+  renderResult();
+  renderVoicePanel();
   updateVoiceButton();
+  updateTimerText();
   syncVoicePeers().catch(() => {});
 }
 
@@ -247,7 +271,8 @@ function renderPlayers() {
     node.style.transform = position.transform || "";
     node.classList.toggle("is-turn", player.id === state.turnPlayerId);
     node.classList.toggle("is-folded", player.folded && state.phase === "playing");
-    node.querySelector(".player-name").textContent = `${player.name}${player.isHost ? " · 房主" : ""}`;
+    const talking = voiceEnabled && (player.id === currentUser.id || voicePeers.has(player.id)) ? " · 麦" : "";
+    node.querySelector(".player-name").textContent = `${player.name}${player.isHost ? " · 房主" : ""}${talking}`;
     node.querySelector(".player-state").textContent = playerState(player);
     node.querySelector(".chips").textContent = `筹码 ${player.chips}`;
     node.querySelector(".bet").textContent = player.betThisHand ? `已下 ${player.betThisHand}` : "";
@@ -271,11 +296,12 @@ function getPositions(count) {
 }
 
 function playerState(player) {
-  if (state.phase === "lobby") return player.ready ? "已准备" : "未准备";
+  const online = player.online ? "" : " · 离线";
+  if (state.phase === "lobby") return `${player.ready ? "已准备" : "未准备"}${online}`;
   if (!player.inHand) return "旁观";
-  if (player.folded) return "弃牌";
-  if (player.seen) return "已看";
-  return "闷牌";
+  if (player.folded) return `弃牌${online}`;
+  if (player.seen) return `已看${online}`;
+  return `闷牌${online}`;
 }
 
 function renderHand() {
@@ -299,6 +325,7 @@ function renderControls() {
     addButton(me.ready ? "取消准备" : "准备", "secondary", () => act("ready"));
     const start = addButton(state.phase === "roundEnd" ? "下一局" : "开局", "primary", () => act(state.phase === "roundEnd" ? "next" : "start"));
     start.disabled = !me.isHost || !state.canStart;
+    if (me.isHost && state.phase === "lobby") renderHostControls(me);
     addButton("离开", "secondary", leaveRoom);
     return;
   }
@@ -331,6 +358,27 @@ function renderControls() {
   controls.append(compareWrap);
 }
 
+function renderHostControls(me) {
+  const others = state.players.filter((player) => player.id !== me.id);
+  if (!others.length) return;
+  const wrap = document.createElement("div");
+  wrap.className = "host-controls";
+  const select = document.createElement("select");
+  select.innerHTML = others.map((player) => `<option value="${player.id}">${escapeHtml(player.name)}</option>`).join("");
+  const kick = document.createElement("button");
+  kick.type = "button";
+  kick.className = "danger";
+  kick.textContent = "踢人";
+  kick.addEventListener("click", () => act("kick", { targetId: select.value }));
+  const transfer = document.createElement("button");
+  transfer.type = "button";
+  transfer.className = "secondary";
+  transfer.textContent = "转让房主";
+  transfer.addEventListener("click", () => act("transferHost", { targetId: select.value }));
+  wrap.append(select, kick, transfer);
+  controls.append(wrap);
+}
+
 function addButton(text, className, handler) {
   const button = document.createElement("button");
   button.type = "button";
@@ -348,6 +396,44 @@ function renderLog() {
     li.textContent = item.text;
     logList.appendChild(li);
   }
+}
+
+function renderResult() {
+  let result = document.querySelector("#resultPanel");
+  if (!result) {
+    result = document.createElement("section");
+    result.id = "resultPanel";
+    result.className = "result-panel hidden";
+    document.querySelector(".mobile-details").before(result);
+  }
+  if (!state.lastResult) {
+    result.classList.add("hidden");
+    result.innerHTML = "";
+    return;
+  }
+  const chips = state.lastResult.chipSummary || [];
+  const bonuses = state.lastResult.happyBonuses || [];
+  result.classList.remove("hidden");
+  result.innerHTML = `
+    <h3>本局结算</h3>
+    <p>${escapeHtml(state.lastResult.winnerName)} 赢得奖池 ${state.lastResult.pot}</p>
+    <div class="settle-list">
+      ${chips.map((item) => `<span>${escapeHtml(item.name)}：${item.chips} 筹码${item.folded ? " · 弃牌" : ""}</span>`).join("")}
+      ${bonuses.map((item) => `<span>${escapeHtml(item.name)} ${item.label}有喜：每人 ${item.bonus}，共得 ${item.total}</span>`).join("")}
+    </div>
+  `;
+}
+
+function updateTimerText() {
+  if (timerInterval) clearInterval(timerInterval);
+  const tick = () => {
+    if (!state || state.phase !== "playing" || !state.turnDeadlineAt) return;
+    const left = Math.max(0, Math.ceil((state.turnDeadlineAt - Date.now()) / 1000));
+    const turnPlayer = state.players.find((p) => p.id === state.turnPlayerId);
+    turnValue.textContent = `${turnPlayer ? turnPlayer.name : "等待"} · ${left}s`;
+  };
+  tick();
+  timerInterval = setInterval(tick, 1000);
 }
 
 function cardEl(card) {
@@ -413,6 +499,7 @@ function leaveRoom() {
   if (events) events.close();
   events = null;
   stopVoice();
+  qrPanel.classList.add("hidden");
   state = null;
   showLobby();
 }
@@ -429,13 +516,23 @@ function logout() {
 
 async function copyInvite() {
   if (!state) return;
-  const url = `${location.origin}?room=${state.id}`;
+  const url = inviteUrl();
   try {
     await navigator.clipboard.writeText(url);
     toast("已复制邀请链接");
   } catch {
     toast(`房间号：${state.id}`);
   }
+}
+
+function inviteUrl() {
+  return `${location.origin}?room=${state.id}`;
+}
+
+function showQr() {
+  if (!state) return;
+  qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(inviteUrl())}`;
+  qrPanel.classList.remove("hidden");
 }
 
 async function toggleVoice() {
@@ -484,7 +581,9 @@ function stopVoice() {
   voicePeers.clear();
   for (const audio of remoteAudios.values()) audio.remove();
   remoteAudios.clear();
+  voiceMuted.clear();
   updateVoiceButton();
+  renderVoicePanel();
 }
 
 function updateVoiceButton() {
@@ -528,6 +627,8 @@ function getOrCreatePeer(peerId) {
       audio = document.createElement("audio");
       audio.autoplay = true;
       audio.playsInline = true;
+      audio.volume = voiceVolumes.get(peerId) ?? 1;
+      audio.muted = voiceMuted.has(peerId);
       remoteAudioRoot.append(audio);
       remoteAudios.set(peerId, audio);
     }
@@ -537,6 +638,7 @@ function getOrCreatePeer(peerId) {
     if (["closed", "failed", "disconnected"].includes(peer.connectionState)) closePeer(peerId);
   };
   voicePeers.set(peerId, peer);
+  renderVoicePanel();
   return peer;
 }
 
@@ -547,6 +649,47 @@ function closePeer(peerId) {
   const audio = remoteAudios.get(peerId);
   if (audio) audio.remove();
   remoteAudios.delete(peerId);
+  renderVoicePanel();
+}
+
+function renderVoicePanel() {
+  if (!voiceEnabled || !state) {
+    voicePanel.classList.add("hidden");
+    voicePanel.innerHTML = "";
+    return;
+  }
+  const peers = state.players.filter((player) => player.id !== currentUser.id);
+  voicePanel.classList.toggle("hidden", peers.length === 0);
+  voicePanel.innerHTML = peers.map((player) => {
+    const muted = voiceMuted.has(player.id);
+    const volume = Math.round((voiceVolumes.get(player.id) ?? 1) * 100);
+    return `
+      <div class="voice-row">
+        <span>${escapeHtml(player.name)}${voicePeers.has(player.id) ? " · 已连接" : " · 连接中"}</span>
+        <button type="button" class="secondary" data-voice-mute="${player.id}">${muted ? "取消静音" : "静音"}</button>
+        <input type="range" min="0" max="100" value="${volume}" data-voice-volume="${player.id}">
+      </div>
+    `;
+  }).join("");
+  voicePanel.querySelectorAll("[data-voice-mute]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.voiceMute;
+      if (voiceMuted.has(id)) voiceMuted.delete(id);
+      else voiceMuted.add(id);
+      const audio = remoteAudios.get(id);
+      if (audio) audio.muted = voiceMuted.has(id);
+      renderVoicePanel();
+    });
+  });
+  voicePanel.querySelectorAll("[data-voice-volume]").forEach((input) => {
+    input.addEventListener("input", () => {
+      const id = input.dataset.voiceVolume;
+      const volume = Number(input.value) / 100;
+      voiceVolumes.set(id, volume);
+      const audio = remoteAudios.get(id);
+      if (audio) audio.volume = volume;
+    });
+  });
 }
 
 async function handleVoiceSignal(message) {
@@ -583,6 +726,15 @@ async function loadAdmin() {
       const label = `${user.displayName} · ${user.username} · ${user.role}${user.disabled ? " · 已禁用" : ""}`;
       adminUsers.append(adminItem(label, user.disabled ? "启用" : "禁用", () => adminToggleUser(user.id)));
     }
+    adminLogs.innerHTML = "";
+    for (const item of (data.logs || []).slice(0, 30)) {
+      const row = document.createElement("div");
+      row.className = "admin-item";
+      const at = new Date(item.at).toLocaleString();
+      row.innerHTML = `<span>${escapeHtml(at)} · ${escapeHtml(item.actorName)} · ${escapeHtml(item.action)} · ${escapeHtml(item.detail || "")}</span>`;
+      adminLogs.append(row);
+    }
+    if (!adminLogs.children.length) adminLogs.textContent = "暂无日志";
   } catch (error) {
     toast(error.message);
   }
